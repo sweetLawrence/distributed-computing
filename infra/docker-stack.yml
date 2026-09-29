@@ -1,0 +1,211 @@
+version: "3.8"
+
+services:
+
+  # ---------- data stores ----------
+  core-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: core
+      POSTGRES_USER: core
+      POSTGRES_PASSWORD: corepass
+    volumes:
+      - core-db-data:/var/lib/postgresql/data
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker1 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  cloud-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cloud
+      POSTGRES_USER: cloud
+      POSTGRES_PASSWORD: cloudpass
+    volumes:
+      - cloud-db-data:/var/lib/postgresql/data
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker2 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  redis:
+    image: redis:7-alpine
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  # ---------- application ----------
+  device:
+    image: dep-device:latest
+    environment:
+      EDGE_URL: http://edge:3000
+      CSV_PATH: /data/smartwear_health_monitoring_dataset.csv
+      STREAM_INTERVAL_MS: 200
+      MAX_ROWS: 200
+    volumes:
+      - /home/vboxuser/distributed-edge-platform/data:/data:ro
+    ports:
+      - target: 3000
+        published: 3000
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker1 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  edge:
+    image: dep-edge:latest
+    environment:
+      REPLICA_ID: edge-{{.Task.Slot}}
+      CORE_1_URL: http://core-1:4000
+      CORE_2_URL: http://core-2:4000
+      PLACEMENT_THRESHOLD: 0.005
+      FORCE_FORWARD: "0"
+      CORE_HEARTBEAT_MS: 3000
+    ports:
+      - target: 3000
+        published: 3001
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 2
+      placement:
+        constraints: [node.role == worker]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  core-1:
+    image: dep-core:latest
+    environment:
+      REPLICA_ID: core-1
+      PORT: 4000
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ML_URL: http://core-ml:5000
+      LEADER_TTL_MS: 10000
+    ports:
+      - target: 4000
+        published: 4001
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker1 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  core-2:
+    image: dep-core:latest
+    environment:
+      REPLICA_ID: core-2
+      PORT: 4000
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ML_URL: http://core-ml:5000
+      LEADER_TTL_MS: 10000
+    ports:
+      - target: 4000
+        published: 4002
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker2 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  core-ml:
+    image: dep-core-ml:latest
+    volumes:
+      - /home/vboxuser/distributed-edge-platform/data:/data:ro
+    ports:
+      - target: 5000
+        published: 5000
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker2 == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+  cloud:
+    image: dep-cloud:latest
+    environment:
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      BATCH_INTERVAL_MS: 60000
+    ports:
+      - target: 6000
+        published: 6000
+        mode: ingress
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      restart_policy:
+        condition: any
+        delay: 5s
+
+volumes:
+  core-db-data:
+  cloud-db-data:
+
+networks:
+  appnet:
+    driver: overlay
+    attachable: true
