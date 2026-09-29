@@ -1,0 +1,25 @@
+                  ┌──────────────┐
+                  │   Txn A      │
+                  └──┬────────┬──┘
+              HOLD   │        │  WAIT-FOR
+                     ▼        ▼
+             ┌───────────┐  ┌───────────┐
+             │  row 19   │  │  row 20   │
+             └───────────┘  └───────────┘
+                     ▲        ▲
+              WAIT-FOR│        │ HOLD
+                  ┌──┴────────┴──┐
+                  │   Txn B      │
+                  └──────────────┘
+
+Edges:
+  A -> row19  (HOLD)         row19 -> A  (allocated)
+  A -> row20  (WAIT)         row20 is held by B
+  B -> row20  (HOLD)         row20 -> B  (allocated)
+  B -> row19  (WAIT)         row19 is held by A
+
+Cycle: A -> row20 -> B -> row19 -> A     <-- deadlock
+
+Detection: PostgreSQL's deadlock detector monitors the wait-for graph;
+on cycle detection it aborts the youngest txn (A in this run)
+with SQLSTATE 40P01 "deadlock detected".

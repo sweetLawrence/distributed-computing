@@ -1,0 +1,162 @@
+services:
+  core-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: core
+      POSTGRES_USER: core
+      POSTGRES_PASSWORD: corepass
+    ports: ["5432:5432"]
+    volumes: [core-db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core -d core"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [appnet]
+
+  cloud-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: cloud
+      POSTGRES_USER: cloud
+      POSTGRES_PASSWORD: cloudpass
+    ports: ["5433:5432"]
+    volumes: [cloud-db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloud -d cloud"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [appnet]
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [appnet]
+
+  device:
+    build: ./services/device
+    environment:
+      EDGE_URL: http://edge-1:3000
+      CSV_PATH: /data/smartwear_health_monitoring_dataset.csv
+      STREAM_INTERVAL_MS: 200
+    volumes:
+      - ./data:/data:ro
+    ports: ["3000:3000"]
+    networks: [appnet]
+
+  edge-1:
+    build: ./services/edge
+    environment:
+      REPLICA_ID: edge-1
+      CORE_1_URL: http://core-1:4000
+      CORE_2_URL: http://core-2:4000
+      PLACEMENT_THRESHOLD: 0.005
+      FORCE_FORWARD: "0"
+      CORE_HEARTBEAT_MS: 3000
+    ports: ["3001:3000"]
+    networks: [appnet]
+
+  edge-2:
+    build: ./services/edge
+    environment:
+      REPLICA_ID: edge-2
+      CORE_1_URL: http://core-1:4000
+      CORE_2_URL: http://core-2:4000
+      PLACEMENT_THRESHOLD: 0.005
+      FORCE_FORWARD: "0"
+      CORE_HEARTBEAT_MS: 3000
+    ports: ["3002:3000"]
+    networks: [appnet]
+
+  core-1:
+    build: ./services/core
+    environment:
+      REPLICA_ID: core-1
+      PORT: 4000
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ML_URL: http://core-ml:5000
+      LEADER_TTL_MS: 10000
+    ports: ["4001:4000"]
+    depends_on:
+      core-db: { condition: service_healthy }
+      cloud-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [appnet]
+
+  core-2:
+    build: ./services/core
+    environment:
+      REPLICA_ID: core-2
+      PORT: 4000
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ML_URL: http://core-ml:5000
+      LEADER_TTL_MS: 10000
+    ports: ["4002:4000"]
+    depends_on:
+      core-db: { condition: service_healthy }
+      cloud-db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [appnet]
+
+  core-ml:
+    build: ./services/core-ml
+    volumes:
+      - ./data:/data:ro
+    ports: ["5000:5000"]
+    networks: [appnet]
+
+  cloud:
+    build: ./services/cloud
+    environment:
+      CORE_DB_HOST: core-db
+      CORE_DB_PORT: 5432
+      CORE_DB_NAME: core
+      CORE_DB_USER: core
+      CORE_DB_PASS: corepass
+      CLOUD_DB_HOST: cloud-db
+      CLOUD_DB_PORT: 5432
+      CLOUD_DB_NAME: cloud
+      CLOUD_DB_USER: cloud
+      CLOUD_DB_PASS: cloudpass
+      BATCH_INTERVAL_MS: 60000
+    ports: ["6000:6000"]
+    depends_on:
+      core-db: { condition: service_healthy }
+      cloud-db: { condition: service_healthy }
+    networks: [appnet]
+
+volumes:
+  core-db-data:
+  cloud-db-data:
+
+networks:
+  appnet:
+    driver: bridge

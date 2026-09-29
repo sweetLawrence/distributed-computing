@@ -1,0 +1,14 @@
+M9 — Migration transparency
+============================
+Setup: core-1 is leader; core-2 follower.
+Test: restart leader (docker restart core-1) while device is streaming.
+Result:
+  sent=12, ok=12, err=0
+  avg=5.25ms, p50=5ms, p95=11ms, p99=11ms
+  No request failed; edge watchdog detected transition and re-routed.
+Edge watchdog log:
+  WATCHDOG: core-1 RECOVERED after unknown      (boot init, cosmetic)
+  WATCHDOG: core-2 MARKED DEAD (was alive)
+  WATCHDOG: core-2 RECOVERED after 12.7s
+Interpretation: client-transparent failure — no 5xx, no dropped requests
+despite a leader restart mid-stream.

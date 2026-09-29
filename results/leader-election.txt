@@ -1,0 +1,10 @@
+Leader election demo — 2026-09-29
+Initial: core-2 leader, core-1 follower
+Kill core-2 at t=0
+Polling core-1 /health:
+  t=1..5s  isLeader=false
+  t=6s     isLeader=true   <-- handoff
+Election latency: ~6s (LEADER_TTL_MS=10000, poll interval 3333ms)
+Log: [core:core-1] BECAME LEADER (msg=22)
+After core-2 restart: core-1=true (holds lock), core-2=false
+Lamport clock observed advancing monotonically across all hops (e.g. 245->266->269->...->405)

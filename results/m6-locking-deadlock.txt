@@ -1,0 +1,18 @@
+M6 — row-level locking + deadlock detection
+=============================================
+Race test (unsafe mode, no FOR UPDATE):
+  start: risk_probability = 0.4964
+  two concurrent increments of +0.01
+  end:   0.5064  =  +0.01 only   <-- LOST UPDATE
+  Both txns reported "committed" but only one write survived.
+
+Race test (safe mode, with SELECT ... FOR UPDATE):
+  start: 0.5064
+  two concurrent increments of +0.01 (serialized by row lock)
+  end:   0.5264  =  +0.02        <-- BOTH WRITES APPLIED
+
+Deadlock demo (patient_id 4 and 7, rows id=19 and id=20):
+  Txn A: LOCK row 19  -> sleep -> try LOCK row 20
+  Txn B: LOCK row 20  -> sleep -> try LOCK row 19
+  Result: A aborted "deadlock detected", B committed.
+  Detector: PostgreSQL built-in wait-for-graph timeout.

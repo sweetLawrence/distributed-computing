@@ -1,0 +1,10 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+results/*.json
+results/*.csv
+*.log
+data/*.csv
+!data/.gitkeep
+.DS_Store
