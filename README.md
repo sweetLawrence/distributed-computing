@@ -14,9 +14,9 @@ Single-node Docker Compose stack; Swarm/VMs deferred (see docs/milestones.md).
 
 ## Key mechanism (Theme 5)
 
-Edge applies `lightTask(row)` — a fast threshold check — and
-`placementScore(coreHealth)` — a weighted score of Core's latency, queue depth,
-and failure risk — to decide whether each record is handled locally or forwarded.
+Edge applies `lightTask(row)` - a fast threshold check - and
+`placementScore(coreHealth)` - a weighted score of Core's latency, queue depth,
+and failure risk - to decide whether each record is handled locally or forwarded.
 Same input, different route depending on Core's live health.
 
 ## Quickstart
@@ -54,11 +54,11 @@ Same input, different route depending on Core's live health.
 ## Results
 
 See `results/`:
-- `capstone-comparison.md` — baseline vs proposed headline numbers
-- `2pc-failure-demo.txt` — cross-DB atomicity evidence
-- `m6-locking-deadlock.txt` — row-lock + deadlock
-- `m7-watchdog.txt` — automated failure detection
-- `m9-migration.txt` — leader restart transparency
+- `capstone-comparison.md` - baseline vs proposed headline numbers
+- `2pc-failure-demo.txt` - cross-DB atomicity evidence
+- `m6-locking-deadlock.txt` - row-lock + deadlock
+- `m7-watchdog.txt` - automated failure detection
+- `m9-migration.txt` - leader restart transparency
 
 ## Deferred
 
