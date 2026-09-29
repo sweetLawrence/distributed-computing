@@ -1,10 +1,30 @@
+# deps
 node_modules/
 __pycache__/
 *.pyc
+
+# env
 .env
+
+# runtime output
 results/*.json
 results/*.csv
 *.log
+
+# data — do NOT commit the CSV (too big, and often licensed)
 data/*.csv
 !data/.gitkeep
+
+# ml artifacts
+*.joblib
+*.pkl
+
+# OS / editors
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# local virtual envs
+venv/
+.venv/
