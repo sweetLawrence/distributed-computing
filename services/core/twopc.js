@@ -5,6 +5,7 @@ const { CoreRecord, CloudSummary } = require('./db');
 async function twoPhaseCommit(row, riskProb) {
   const txn_id = randomUUID();
   const log = [];
+  const t_start = Date.now();
 
   // ---- PHASE 1: PREPARE ----
   let corePrepared = false, cloudPrepared = false;
@@ -34,12 +35,12 @@ async function twoPhaseCommit(row, riskProb) {
     await CoreRecord.update({ status: 'COMMITTED' }, { where: { txn_id } });
     await CloudSummary.update({ status: 'COMMITTED', batch_id: `batch-${Date.now()}` }, { where: { txn_id } });
     log.push('BOTH COMMITTED');
-    return { outcome: 'COMMIT', txn_id, log };
+    return { outcome: 'COMMIT', txn_id, log, durationMs: Date.now() - t_start };
   } else {
     if (corePrepared) await CoreRecord.update({ status: 'ABORTED' }, { where: { txn_id } });
     if (cloudPrepared) await CloudSummary.update({ status: 'ABORTED' }, { where: { txn_id } });
     log.push('ROLLED BACK');
-    return { outcome: 'ABORT', txn_id, log };
+    return { outcome: 'ABORT', txn_id, log, durationMs: Date.now() - t_start };
   }
 }
 

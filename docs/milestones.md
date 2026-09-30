@@ -71,3 +71,89 @@ Baseline (forward-all) vs proposed (edge placement):
 - p50 latency 7.7× faster
 - err=0 in both modes
 Evidence: `results/capstone-comparison.md`
+
+## M5 fix verified — 2PC atomicity restored
+
+**Root cause confirmed:** `sequelize.sync({ alter: true })` in `services/core/db.js`
+ran on every core replica startup. When a replica booted before its DB was
+reachable on the overlay (common during rolling `--force` updates and
+container migrations), the alter path either recreated the table or wrote
+partial state, silently losing rows on the core side while cloud-db (booted
+once, stayed up) kept them.
+
+**Fix applied:** changed both `sync({ alter: true })` calls to plain `sync()`
+in `services/core/db.js`. Sequelize now only creates the table if missing —
+never alters, never drops. Rebuilt `dep-core:latest`, distributed the image
+to both nodes, force-updated both replicas.
+
+**Verification:** wiped both DB volumes, redeployed the stack, ran one clean
+200-row batch. Result:
+  core-db  : COMMITTED = 40
+  cloud-db : COMMITTED = 40
+Counts match exactly. Atomicity restored.
+
+**Lesson:** ORM schema-sync-as-a-side-effect-of-startup is unsafe in
+distributed deployments. Schema changes must be versioned, one-shot migrations
+run at deploy time, not on every replica boot.
+
+## M5 cross-VM 2PC — verified failure and recovery
+
+**Setup:** leader core-2 on vm-worker-1, core-db on vm-manager, cloud-db on vm-worker-1.
+Two separate physical VMs participate in every commit.
+
+**Clean baseline (200 rows):**
+  core-db  : COMMITTED = 40
+  cloud-db : COMMITTED = 40
+
+**Failure injection (docker service scale theme5_cloud-db=0):**
+  Device stats: sent=86, ok=85, err=1, avg=309ms, p95=2572ms, p99=4163ms
+  (latency spike because each flagged record waits for cloud-db connect timeout)
+  core-db after batch:
+    COMMITTED = 40   (unchanged)
+    ABORTED   = 23   (all in-flight flagged records correctly rolled back)
+  cloud-db down — no partial writes reached it
+  core-2 leader logs: every flagged record shows "txn=ABORT"
+
+**Recovery (scale cloud-db back to 1, run again):**
+  Device stats: sent=200, ok=200, err=0, avg=18ms, p95=89ms, p99=123ms
+  core-db  : COMMITTED = 63, ABORTED = 23
+  cloud-db : COMMITTED = 63
+  Counts match — atomicity restored, no drift.
+
+**Conclusion:** 2PC correctly distinguishes prepare failures from commits.
+Cross-VM atomicity holds under injected failure and after recovery.
+Latency cost of the failure path: 2–4s per record waiting for connect timeout
+(documented as a future improvement: set a shorter connect timeout in the pg client).
+
+## M6 — Resource-allocation graph (deadlock scenario)
+
+Scenario: two concurrent transactions each lock one row and then wait for the
+other's lock. Cycle: A → row20 → B → row19 → A. Detected by PostgreSQL's
+built-in wait-for-graph monitor; youngest txn aborted with SQLSTATE 40P01.
+
+    Txn A ──HOLD──► row 19
+      │
+      │ WAIT-FOR
+      ▼
+    row 20 ◄──HOLD── Txn B
+      ▲                │
+      │                │ WAIT-FOR
+      │                ▼
+    row 19 ◄────────────┘
+    (cycle: A → row20 → B → row19 → A)
+
+Mermaid:
+
+    graph LR
+      A[Txn A] -- holds --> R19[row 19]
+      A -- waits for --> R20[row 20]
+      B[Txn B] -- holds --> R20
+      B -- waits for --> R19
+      R19 -- allocated to --> A
+      R20 -- allocated to --> B
+
+Detection mechanism: PostgreSQL monitors the wait-for graph and aborts the
+youngest transaction in any cycle. Our experiment logged:
+
+    {"label":"A","outcome":"aborted","error":"deadlock detected"}
+    {"label":"B","outcome":"committed"}

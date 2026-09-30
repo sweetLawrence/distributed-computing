@@ -4,6 +4,7 @@ const leader = require('./leader');
 const { init } = require('./db');
 const { twoPhaseCommit } = require('./twopc');
 const lockdemo = require('./lockdemo');
+const mlcache = require('./mlcache');
 
 const app = express();
 app.use(express.json());
@@ -15,6 +16,7 @@ const ML_URL = process.env.ML_URL || 'http://core-ml:5000';
 
 let processed = 0, queueLength = 0, failureRisk = 0.1, simDelayMs = 0, lastLogAt = 0;
 let txnCount = 0, commitCount = 0, abortCount = 0;
+let txnTotalMs = 0, txnMaxMs = 0;
 
 app.get('/health', (_req, res) => res.json({
   service: 'core', replica: REPLICA_ID, status: 'ok',
@@ -22,7 +24,9 @@ app.get('/health', (_req, res) => res.json({
   isLeader: leader.isLeader(),
   lamport: leader.tick(),
   electionMessages: leader.getElectionMessages(),
-  txnCount, commitCount, abortCount
+  txnCount, commitCount, abortCount,
+  txnAvgMs: txnCount ? +(txnTotalMs / txnCount).toFixed(2) : 0,
+  txnMaxMs
 }));
 
 async function callML(row) {
@@ -48,19 +52,36 @@ app.post('/process', async (req, res) => {
     if (!leader.isLeader()) {
       try {
         const r = await axios.post(`${PEER_URL}/process`, { row, t_sent, t_edge_in, lamport: lamportOut }, { timeout: 5000 });
-        queueLength--;
         return res.json({ ...r.data, forwarded_from: REPLICA_ID, lamport: lamportOut });
       } catch (e) {
         return res.status(502).json({ status: 'error', replica: REPLICA_ID, error: `peer forward failed: ${e.message}` });
       }
     }
 
-    const riskProb = await callML(row);
+    // M11 — distributed shared state: check Redis cache before calling ML
+    let riskProb = null;
+    let cacheResult = { hit: false };
+    if (row && row.patient_id != null) {
+      cacheResult = await mlcache.get(row.patient_id);
+      if (cacheResult.hit) {
+        riskProb = cacheResult.risk_probability;
+      }
+    }
+    if (riskProb === null) {
+      riskProb = await callML(row);
+      if (riskProb !== null && row && row.patient_id != null) {
+        await mlcache.set(row.patient_id, riskProb);
+      }
+    }
     let txn = null;
     if (riskProb !== null) {
       txnCount++;
       txn = await twoPhaseCommit(row, riskProb);
       if (txn.outcome === 'COMMIT') commitCount++; else abortCount++;
+      if (txn.durationMs != null) {
+        txnTotalMs += txn.durationMs;
+        if (txn.durationMs > txnMaxMs) txnMaxMs = txn.durationMs;
+      }
     }
 
     const now = Date.now();
@@ -110,6 +131,12 @@ app.post('/lock/deadlock', async (req, res) => {
   const { a, b } = req.body;
   const result = await lockdemo.deadlockDemo(a, b);
   res.json(result);
+});
+
+
+app.get('/mlcache', async (_req, res) => {
+  const s = await mlcache.stats();
+  res.json({ replica: REPLICA_ID, ttlSec: mlcache.TTL_SEC, ...s });
 });
 
 (async () => {

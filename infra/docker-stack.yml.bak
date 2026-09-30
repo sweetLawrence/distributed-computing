@@ -16,8 +16,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.core-side == true]
-      resources:
-        limits: { cpus: "0.50", memory: 512M }
       restart_policy: { condition: any, delay: 5s }
 
   cloud-db:
@@ -33,8 +31,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.cloud-side == true]
-      resources:
-        limits: { cpus: "0.50", memory: 512M }
       restart_policy: { condition: any, delay: 5s }
 
   redis:
@@ -44,8 +40,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.manager == true]
-      resources:
-        limits: { cpus: "0.25", memory: 128M }
       restart_policy: { condition: any, delay: 5s }
 
   # ---------- application ----------
@@ -67,8 +61,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.core-side == true]
-      resources:
-        limits: { cpus: "0.25", memory: 128M }
       restart_policy: { condition: any, delay: 5s }
 
   edge:
@@ -87,8 +79,6 @@ services:
     networks: [appnet]
     deploy:
       replicas: 2
-      resources:
-        limits: { cpus: "0.25", memory: 128M }
       restart_policy: { condition: any, delay: 5s }
 
   core-1:
@@ -119,8 +109,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.core-side == true]
-      resources:
-        limits: { cpus: "0.50", memory: 256M }
       restart_policy: { condition: any, delay: 5s }
 
   core-2:
@@ -151,8 +139,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.cloud-side == true]
-      resources:
-        limits: { cpus: "0.50", memory: 256M }
       restart_policy: { condition: any, delay: 5s }
 
   core-ml:
@@ -168,8 +154,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.cloud-side == true]
-      resources:
-        limits: { cpus: "1.00", memory: 1G }
       restart_policy: { condition: any, delay: 5s }
 
   cloud:
@@ -195,26 +179,6 @@ services:
       replicas: 1
       placement:
         constraints: [node.labels.manager == true]
-      resources:
-        limits: { cpus: "0.25", memory: 128M }
-      restart_policy: { condition: any, delay: 5s }
-
-  nginx-edge:
-    image: nginx:alpine
-    ports:
-      - target: 80
-        published: 8080
-        mode: ingress
-    configs:
-      - source: nginx_edge_conf_v3
-        target: /etc/nginx/nginx.conf
-    networks: [appnet]
-    deploy:
-      replicas: 1
-      placement:
-        constraints: [node.labels.manager == true]
-      resources:
-        limits: { cpus: "0.25", memory: 64M }
       restart_policy: { condition: any, delay: 5s }
 
 volumes:
@@ -224,6 +188,3 @@ volumes:
 networks:
   appnet:
     attachable: true
-configs:
-  nginx_edge_conf_v3:
-    file: ./nginx-edge/nginx.conf

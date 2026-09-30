@@ -104,7 +104,7 @@ async function heartbeatOnce() {
 setInterval(heartbeatOnce, CORE_HEARTBEAT_MS);
 heartbeatOnce();
 
-app.get('/health', (_req, res) => res.json({ service: 'edge', replica: REPLICA_ID, status: 'ok' }));
+app.get('/health', (_req, res) => res.json({ service: 'edge', replica: REPLICA_ID, status: 'ok', localCount, forwardCount, upstreamFailures, packetLossPct: (localCount + forwardCount + upstreamFailures) ? +((upstreamFailures / (localCount + forwardCount + upstreamFailures)) * 100).toFixed(3) : 0 }));
 app.get('/core-health', (_req, res) => res.json(coreHealth));
 app.get('/watchdog', (_req, res) => {
   const now = Date.now();
@@ -125,7 +125,7 @@ app.get('/watchdog', (_req, res) => {
   res.json(out);
 });
 
-let localCount = 0, forwardCount = 0;
+let localCount = 0, forwardCount = 0, upstreamFailures = 0;
 app.post('/ingest', async (req, res) => {
   const { row, t_sent, lamport: incomingLamport } = req.body;
   const t_edge_in = Date.now();
@@ -141,6 +141,7 @@ app.post('/ingest', async (req, res) => {
     const resp = await axios.post(`${target}/process`, { row, t_sent, t_edge_in, lamport: lamportOut }, { timeout: 5000 });
     res.json({ status: 'forwarded', replica: REPLICA_ID, decision, routed_to: target, lamport: lamportOut, t_sent, t_edge_in, t_edge_out: Date.now(), core_response: resp.data, local_count: localCount, forward_count: forwardCount });
   } catch (e) {
+    upstreamFailures++;
     res.status(502).json({ status: 'error', replica: REPLICA_ID, routed_to: target, error: e.message });
   }
 });
