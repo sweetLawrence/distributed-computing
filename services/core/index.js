@@ -5,6 +5,7 @@ const { init } = require('./db');
 const { twoPhaseCommit } = require('./twopc');
 const lockdemo = require('./lockdemo');
 const mlcache = require('./mlcache');
+const metrics = require('./metrics');
 
 const app = express();
 app.use(express.json());
@@ -18,6 +19,7 @@ let processed = 0, queueLength = 0, failureRisk = 0.1, simDelayMs = 0, lastLogAt
 let txnCount = 0, commitCount = 0, abortCount = 0;
 let txnTotalMs = 0, txnMaxMs = 0;
 
+app.get('/metrics', async (_req, res) => { res.set('Content-Type', metrics.register.contentType); res.end(await metrics.register.metrics()); });
 app.get('/health', (_req, res) => res.json({
   service: 'core', replica: REPLICA_ID, status: 'ok',
   processed, queueLength, failureRisk,
@@ -68,6 +70,7 @@ app.post('/process', async (req, res) => {
       }
     }
     if (riskProb === null) {
+      metrics.mlCall.inc();
       riskProb = await callML(row);
       if (riskProb !== null && row && row.patient_id != null) {
         await mlcache.set(row.patient_id, riskProb);
@@ -77,7 +80,8 @@ app.post('/process', async (req, res) => {
     if (riskProb !== null) {
       txnCount++;
       txn = await twoPhaseCommit(row, riskProb);
-      if (txn.outcome === 'COMMIT') commitCount++; else abortCount++;
+      if (txn.outcome === 'COMMIT') { commitCount++; metrics.txn.inc({ outcome: 'COMMIT' }); } else { abortCount++; metrics.txn.inc({ outcome: 'ABORT' }); }
+      if (txn.durationMs != null) metrics.txnDuration.observe(txn.durationMs);
       if (txn.durationMs != null) {
         txnTotalMs += txn.durationMs;
         if (txn.durationMs > txnMaxMs) txnMaxMs = txn.durationMs;

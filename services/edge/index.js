@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const lamport = require('./lamport');
+const metrics = require('./metrics');
 
 const app = express();
 app.use(express.json());
@@ -104,6 +105,7 @@ async function heartbeatOnce() {
 setInterval(heartbeatOnce, CORE_HEARTBEAT_MS);
 heartbeatOnce();
 
+app.get('/metrics', async (_req, res) => { res.set('Content-Type', metrics.register.contentType); res.end(await metrics.register.metrics()); });
 app.get('/health', (_req, res) => res.json({ service: 'edge', replica: REPLICA_ID, status: 'ok', localCount, forwardCount, upstreamFailures, packetLossPct: (localCount + forwardCount + upstreamFailures) ? +((upstreamFailures / (localCount + forwardCount + upstreamFailures)) * 100).toFixed(3) : 0 }));
 app.get('/core-health', (_req, res) => res.json(coreHealth));
 app.get('/watchdog', (_req, res) => {
@@ -133,15 +135,18 @@ app.post('/ingest', async (req, res) => {
   const decision = decide(row);
   if (decision.route === 'handle-locally') {
     localCount++;
+    metrics.placement.inc({ route: 'handle-locally' });
     return res.json({ status: 'handled-locally', replica: REPLICA_ID, decision, light_task: lightTask(row), lamport: lamportOut, t_sent, t_edge_in, t_edge_out: Date.now(), local_count: localCount, forward_count: forwardCount });
   }
   forwardCount++;
+  metrics.placement.inc({ route: 'forward-to-core' });
   const target = decision.target;
   try {
     const resp = await axios.post(`${target}/process`, { row, t_sent, t_edge_in, lamport: lamportOut }, { timeout: 5000 });
     res.json({ status: 'forwarded', replica: REPLICA_ID, decision, routed_to: target, lamport: lamportOut, t_sent, t_edge_in, t_edge_out: Date.now(), core_response: resp.data, local_count: localCount, forward_count: forwardCount });
   } catch (e) {
     upstreamFailures++;
+    metrics.upstreamFailures.inc();
     res.status(502).json({ status: 'error', replica: REPLICA_ID, routed_to: target, error: e.message });
   }
 });

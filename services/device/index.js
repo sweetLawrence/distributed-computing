@@ -2,6 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const readline = require('readline');
 const axios = require('axios');
+const metrics = require('./metrics');
+const lamport = require('./lamport');
 
 const app = express();
 app.use(express.json());
@@ -15,7 +17,13 @@ const MAX_ROWS = parseInt(process.env.MAX_ROWS || '1000', 10);
 let streaming = false;
 let stats = { sent: 0, ok: 0, err: 0, totalLatencyMs: 0, minLatencyMs: Infinity, maxLatencyMs: 0, latencies: [] };
 
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', metrics.register.contentType);
+  res.end(await metrics.register.metrics());
+});
+
 app.get('/health', (_req, res) => res.json({ service: 'device', status: 'ok', streaming }));
+
 app.get('/stats', (_req, res) => {
   const lat = stats.latencies;
   const avg = stats.ok ? stats.totalLatencyMs / stats.ok : 0;
@@ -24,13 +32,14 @@ app.get('/stats', (_req, res) => {
   const p95 = sorted.length ? sorted[Math.floor(sorted.length * 0.95)] : 0;
   const p99 = sorted.length ? sorted[Math.floor(sorted.length * 0.99)] : 0;
   res.json({
-    ...stats,
+    sent: stats.sent, ok: stats.ok, err: stats.err,
     avgLatencyMs: +avg.toFixed(2),
     minLatencyMs: stats.minLatencyMs === Infinity ? 0 : stats.minLatencyMs,
-    p50, p95, p99,
-    latencies: undefined
+    maxLatencyMs: stats.maxLatencyMs,
+    p50, p95, p99
   });
 });
+
 app.post('/stats/reset', (_req, res) => {
   stats = { sent: 0, ok: 0, err: 0, totalLatencyMs: 0, minLatencyMs: Infinity, maxLatencyMs: 0, latencies: [] };
   res.json({ reset: true });
@@ -65,8 +74,9 @@ async function streamCsv() {
     if (!row) continue;
 
     const t_sent = Date.now();
+    const lam = lamport.tick();
     try {
-      const resp = await axios.post(`${EDGE_URL}/ingest`, { row, t_sent }, { timeout: 5000 });
+      const resp = await axios.post(`${EDGE_URL}/ingest`, { row, t_sent, lamport: lam }, { timeout: 5000 });
       const rtt = Date.now() - t_sent;
       stats.sent++;
       stats.ok++;
@@ -74,10 +84,13 @@ async function streamCsv() {
       stats.minLatencyMs = Math.min(stats.minLatencyMs, rtt);
       stats.maxLatencyMs = Math.max(stats.maxLatencyMs, rtt);
       stats.latencies.push(rtt);
+      metrics.requests.inc({ status: 'ok' });
+      metrics.duration.observe(rtt);
       if (sent % 50 === 0 || sent < 5) {
-        console.log(`[device] row ${sent} pid=${row.patient_id} -> ${resp.data.status} rtt=${rtt}ms`);
+        console.log(`[device] row ${sent} pid=${row.patient_id} -> ${resp.data.status} lam=${lam} rtt=${rtt}ms`);
       }
     } catch (e) {
+      metrics.requests.inc({ status: 'err' });
       stats.sent++;
       stats.err++;
       console.log(`[device] ERR pid=${row.patient_id}: ${e.message}`);
