@@ -21,7 +21,7 @@ export const MILESTONES: Milestone[] = [
     id: 'M1',
     title: 'Distributed Operating System Foundation',
     week: 1,
-    summary: 'Two VMs joined into one logical cluster. Nodes, processes, resources, communication.',
+    summary: 'Three VMs joined into one logical cluster. Nodes, processes, resources, communication.',
     tests: [
       'Distributed vs network operating systems',
       'Process management',
@@ -40,7 +40,7 @@ export const MILESTONES: Milestone[] = [
     analogy:
       'A single-kitchen restaurant has one chef, one stove, one menu. A franchise restaurant has many kitchens that share the same menu, ordering system, and recipes. The customer does not care which kitchen cooked the meal. Our distributed OS is the shared menu and ordering system.',
     howWeBuilt:
-      'Two Ubuntu VMs joined into a Docker Swarm: one manager and one worker. Thirteen services run across them, communicating over an overlay network. Nodes carry role labels so services land where we want them.',
+      'Three Ubuntu VMs joined into a Docker Swarm: one manager and two workers. Fifteen services run across them, communicating over an overlay network. Nodes carry role labels so services land where we want them.',
     definitions: [
       {
         term: 'Node',

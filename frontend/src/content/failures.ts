@@ -35,7 +35,7 @@ export const FAILURES: FailureLogEntry[] = [
     milestone: 'M7',
     date: '2026-09-30',
     whatChanged:
-      'Deployed the full 13-service stack across two VMs, each 4 GB RAM, no swap.',
+      'Deployed the full 15-service stack across two VMs, each 4 GB RAM, no swap (later expanded to three VMs).',
     whatFailed:
       'Services flapped: different ones showed 0/1 or 0/2 on every `docker stack services` snapshot. cadvisor disappeared from `docker stats`.',
     whyItFailed:

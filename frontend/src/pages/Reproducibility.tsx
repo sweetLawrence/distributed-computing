@@ -132,7 +132,7 @@ export default function Reproducibility () {
               disk.
             </List.Item>
             <List.Item>Adapter 1: NAT. Adapter 2: Host-only Adapter.</List.Item>
-            <List.Item>Static IPs 192.168.56.11 and 192.168.56.12.</List.Item>
+            <List.Item>Static IPs 192.168.56.11, 192.168.56.12, 192.168.56.13.</List.Item>
             <List.Item>Install OpenSSH server when prompted.</List.Item>
           </List>
         </Card>
@@ -158,12 +158,13 @@ docker --version`}
             text={`# On vm-manager:
 docker swarm init --advertise-addr 192.168.56.11
 docker swarm join-token worker
-# Copy the printed join command, run it on vm-worker-1.
+# Copy the printed join command and run it on vm-worker-1 AND vm-worker-2.
 
 # On vm-manager: label the nodes
 docker node update --label-add manager=true    vm-manager
 docker node update --label-add core-side=true  vm-manager
-docker node update --label-add cloud-side=true vm-worker-1`}
+docker node update --label-add cloud-side=true vm-worker-1
+docker node update --label-add worker2=true    vm-worker-2`}
           />
         </Card>
 
@@ -191,7 +192,7 @@ docker build -t dep-core:latest      ./services/core
 docker build -t dep-cloud:latest     ./services/cloud
 docker build -t dep-core-ml:latest   ./services/core-ml
 docker build -t dep-admin:latest     ./services/admin
-# On vm-worker-1: docker load each image (or use a local registry)
+# On vm-worker-1 AND vm-worker-2: docker load each image
 
 docker stack deploy -c infra/docker-stack.yml theme5
 sleep 90
