@@ -10,10 +10,9 @@ import {
   Text,
   Stack,
   NumberInput,
-  Alert,
   Tooltip
 } from '@mantine/core'
-import { RefreshCw, FileText, Plus, Minus } from 'lucide-react'
+import { RefreshCw, FileText, Plus } from 'lucide-react'
 import { notifications } from '@mantine/notifications'
 import type { AdminService } from '../api/admin'
 import { adminApi } from '../api/admin'

@@ -9,7 +9,6 @@ import {
   Badge,
   Divider,
   Alert,
-  Code,
   Loader,
   Center
 } from '@mantine/core'

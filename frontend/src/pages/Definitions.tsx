@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
   Container, Title, Text, Stack, Card, Badge, Group, TextInput, Box,
-  SegmentedControl, Divider
+  SegmentedControl,
 } from '@mantine/core';
 import { BookMarked, Search } from 'lucide-react';
 import { DEFINITIONS } from '../content/definitions';

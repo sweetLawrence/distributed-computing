@@ -2,6 +2,7 @@ export interface Milestone {
   id: string // "M1".."M12"
   title: string // human name
   week: number
+  summary?: string // 1-line teaser for the grid
   tests: string[] // what the rubric says this milestone tests
   deliverables: string[] // what the rubric wants as output
   plainEnglish: string // one-paragraph explanation for a newcomer

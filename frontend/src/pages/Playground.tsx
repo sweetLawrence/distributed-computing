@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Container, Title, Text, Stack, Tabs, SimpleGrid, Card, Group, Code
+  Container, Title, Text, Stack, Tabs, Card, Group, Code
 } from '@mantine/core';
 import { SCENARIOS } from '../content/scenarios';
 import type { Scenario } from '../content/scenarios';

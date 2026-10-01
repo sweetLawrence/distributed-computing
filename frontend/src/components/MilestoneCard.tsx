@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Card, Title, Text, Badge, Group, Stack, Divider, Accordion,
-  Button, Alert, Code, List, Anchor, Loader, Box
+  Button, Alert, Code, List, Anchor, Box
 } from '@mantine/core';
 import type { Milestone } from '../content/milestones';
 import { apiGet } from '../api/client';

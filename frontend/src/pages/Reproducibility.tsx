@@ -11,7 +11,6 @@ import {
   Table,
   Accordion,
   Badge,
-  Anchor
 } from '@mantine/core'
 
 function Copy ({ text }: { text: string }) {

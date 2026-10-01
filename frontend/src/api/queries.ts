@@ -3,6 +3,7 @@ import { apiGet } from './client';
 
 export interface Health {
   service: string; replica?: string; status: string;
+  streaming?: boolean;
   isLeader?: boolean; processed?: number; queueLength?: number;
   txnCount?: number; commitCount?: number; abortCount?: number;
   txnAvgMs?: number; txnMaxMs?: number;

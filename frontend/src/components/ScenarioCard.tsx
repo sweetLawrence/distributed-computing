@@ -7,12 +7,6 @@ import { apiGet, apiPost } from '../api/client';
 
 interface Props { s: Scenario; }
 
-function resolveEndpoint(endpoint: string): string {
-  // 'prom' scenarios are relative to prometheusUrl, not apiBase
-  if (endpoint.startsWith('/prom/')) return endpoint; // handled below
-  return endpoint;
-}
-
 async function fire(s: Scenario) {
   if (s.endpoint.startsWith('/prom/')) {
     // strip /prom prefix and use prometheus via proxy

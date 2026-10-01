@@ -1,7 +1,6 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import {
   Container,
-  Title,
   Text,
   Stack,
   Group,

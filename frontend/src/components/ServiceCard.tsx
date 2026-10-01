@@ -1,4 +1,4 @@
-import { Card, Group, Text, Stack, Badge, Code } from '@mantine/core'
+import { Card, Group, Text, Stack, Code } from '@mantine/core'
 import { StatusBadge } from './StatusBadge'
 
 interface Props {
