@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Card, Title, Text, Badge, Group, Stack, Divider, Accordion,
-  Button, Alert, Code, List, Anchor, Loader, Box, SimpleGrid, Table
+  Button, Alert, Code, List, Anchor, Box, Table
 } from '@mantine/core';
 import { AlertCircle, CheckCircle2, Loader2, FlaskConical } from 'lucide-react';
 import type { Milestone } from '../content/milestones';
