@@ -11,6 +11,7 @@ export interface Milestone {
   definitions: { term: string; meaning: string }[]
   liveTestLabel?: string // button label, e.g. "Show nodes"
   liveTestEndpoint?: string // API path, resolved at click time
+  liveTestMethod?: 'GET' | 'POST' // defaults to POST
   liveTestNote?: string // explanation shown after the response
   terminal: string[] // copyable terminal commands
   links: { label: string; url: string }[]
@@ -62,8 +63,9 @@ export const MILESTONES: Milestone[] = [
           "Docker's built-in orchestrator that decides which node runs which container."
       }
     ],
-    liveTestLabel: 'Show nodes and services',
-    liveTestEndpoint: '/device/health',
+    liveTestLabel: 'Show topology',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m1/topology',
     liveTestNote:
       'Both nodes are Ready and labelled. Services are distributed across them by placement constraints.',
     terminal: [
@@ -127,8 +129,9 @@ export const MILESTONES: Milestone[] = [
           'The 50th / 95th / 99th percentile of latency - half/95%/99% of requests were at least this fast.'
       }
     ],
-    liveTestLabel: 'Show device stats',
-    liveTestEndpoint: '/device/stats',
+    liveTestLabel: 'Measure throughput & latency',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m2/stats',
     liveTestNote:
       'The response shows sent, ok, err, and percentile latencies. err > 0 means packet loss. p99 >> p50 means high jitter.',
     terminal: [
@@ -199,8 +202,9 @@ export const MILESTONES: Milestone[] = [
           'Three tiers of compute: near the data source (Edge), coordinating (Core), archival (Cloud).'
       }
     ],
-    liveTestLabel: 'Show all service health',
-    liveTestEndpoint: '/device/health',
+    liveTestLabel: 'Show deployed architecture',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m1/topology',
     liveTestNote:
       'Each service is independently deployed and can fail without bringing the others down - the property that motivated choosing microservices.',
     terminal: [
@@ -258,14 +262,18 @@ export const MILESTONES: Milestone[] = [
           'Two leaders at once - catastrophic; we avoid it with a TTL-based lock.'
       }
     ],
-    liveTestLabel: 'Show leader health',
-    liveTestEndpoint: '/core-1/health',
+    liveTestLabel: 'Trigger leader failover',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m4/failover',
     liveTestNote:
       'Only one replica shows isLeader:true at any moment. Kill it and the other takes over within the TTL window (~6–10 s).',
     terminal: [
-      'curl http://192.168.56.11:4001/health | grep isLeader',
-      'curl http://192.168.56.11:4002/health | grep isLeader',
-      '# kill leader and watch',
+      '# Via the admin sidecar (this is what the button does):',
+      'curl -X POST http://192.168.56.11:8090/admin/milestones/m4/failover',
+      '',
+      '# Manually:',
+      'curl -s http://192.168.56.11:4001/health | grep isLeader',
+      'curl -s http://192.168.56.11:4002/health | grep isLeader',
       'docker service scale theme5_core-1=0 && sleep 12 && docker service scale theme5_core-1=1'
     ],
     links: [
@@ -327,8 +335,9 @@ export const MILESTONES: Milestone[] = [
         meaning: 'Phase 2: "save it for real" (only if all said yes).'
       }
     ],
-    liveTestLabel: 'Show commit / abort counts',
-    liveTestEndpoint: '/core-1/health',
+    liveTestLabel: 'Kill cloud-db, run batch, show ABORTs',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m5/2pc-failure',
     liveTestNote:
       'Every COMMIT appears in both databases with the same txn_id. When cloud-db is killed, in-flight transactions are ABORTED and no half-written rows exist.',
     terminal: [
@@ -393,8 +402,9 @@ export const MILESTONES: Milestone[] = [
           'Nodes are processes and resources; edges are "holds" and "waits-for"; a cycle means deadlock.'
       }
     ],
-    liveTestLabel: 'Show txn counts (evidence of locking)',
-    liveTestEndpoint: '/core-1/health',
+    liveTestLabel: 'Manufacture a deadlock',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m6/deadlock',
     liveTestNote:
       'Under concurrent writes with row locks, no updates are lost. Without locks, one update would disappear and the final value would be off by exactly one increment.',
     terminal: [
@@ -463,8 +473,9 @@ export const MILESTONES: Milestone[] = [
         meaning: 'A monitor that detects and reacts to failures.'
       }
     ],
-    liveTestLabel: 'Show edge watchdog state',
-    liveTestEndpoint: '/edge/watchdog',
+    liveTestLabel: 'Kill a core, watch watchdog react',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m7/watchdog',
     liveTestNote:
       'The response shows each Core replica as alive or dead with uptime / downtime. Availability is a percentage; MTTR is derived from the transition log.',
     terminal: [
@@ -523,8 +534,9 @@ export const MILESTONES: Milestone[] = [
           'Autonomous services plus a shared control plane - what we built.'
       }
     ],
-    liveTestLabel: 'Show service placement (model evidence)',
-    liveTestEndpoint: '/device/health',
+    liveTestLabel: 'Show integrated-model evidence',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m1/topology',
     liveTestNote:
       'Services are autonomous (each a container) yet coordinated (each obeys Swarm placement and DNS). That is the integrated model in production.',
     terminal: [
@@ -580,8 +592,9 @@ export const MILESTONES: Milestone[] = [
         meaning: 'The user does not see a failure if the system can recover.'
       }
     ],
-    liveTestLabel: 'Show running replicas (replication evidence)',
-    liveTestEndpoint: '/device/health',
+    liveTestLabel: 'Force migration, prove no client error',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m9/migration',
     liveTestNote:
       'Two replicas exist, but the client only ever sees one service name - replication transparency. Forcing a service to restart mid-stream produces no client-visible error.',
     terminal: [
@@ -636,8 +649,9 @@ export const MILESTONES: Milestone[] = [
         meaning: 'Create → locate → schedule → coordinate → terminate.'
       }
     ],
-    liveTestLabel: 'Resolve service name from inside the network',
-    liveTestEndpoint: '/core-1/health',
+    liveTestLabel: 'Resolve service names from inside',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m10/naming',
     liveTestNote:
       'Curl by service name works because the overlay DNS resolves core-1 and core-2 inside the cluster.',
     terminal: [
@@ -696,8 +710,9 @@ export const MILESTONES: Milestone[] = [
           'The value was found in the shared cache (hit) or had to be computed (miss).'
       }
     ],
-    liveTestLabel: 'Show cache hits and misses',
-    liveTestEndpoint: '/core-1/mlcache',
+    liveTestLabel: 'Demonstrate shared cache',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m11/cache',
     liveTestNote:
       'Hits means the risk was already known; misses means it was computed by ML and stored in Redis. Both replicas share the same underlying cache.',
     terminal: [
@@ -751,8 +766,9 @@ export const MILESTONES: Milestone[] = [
           'The final test that exercises the whole system under realistic load.'
       }
     ],
-    liveTestLabel: 'Show current device stats',
-    liveTestEndpoint: '/device/stats',
+    liveTestLabel: 'Show current capstone numbers',
+    liveTestMethod: 'POST',
+    liveTestEndpoint: '/admin/milestones/m2/stats',
     liveTestNote:
       'This snapshot is either baseline or proposed, depending on the current FORCE_FORWARD value. Flip it, re-run the same batch, and compare.',
     terminal: [
