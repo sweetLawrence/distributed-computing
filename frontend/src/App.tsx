@@ -31,6 +31,7 @@ import Capstone from './pages/Capstone'
 import Reproducibility from './pages/Reproducibility'
 import Definitions from './pages/Definitions'
 import Story from './pages/Story'
+import { ScrollToTop } from './components/ScrollToTop'
 
 const NAV = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -110,6 +111,7 @@ export default function App () {
       <AppShell.Navbar p='xs'>{links}</AppShell.Navbar>
 
       <AppShell.Main>
+        <ScrollToTop />
         <Routes>
           <Route path='/' element={<Overview />} />
           <Route path='/milestones' element={<Milestones />} />
