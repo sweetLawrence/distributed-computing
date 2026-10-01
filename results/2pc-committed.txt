@@ -1,5 +1,5 @@
-2PC atomicity evidence — 2026-09-29
+2PC atomicity evidence - 2026-09-29
 core-db  : COMMITTED=129, ABORTED=3
 cloud-db : COMMITTED=129
 Same txn_ids present in both DBs. Atomicity holds across two independent Postgres instances.
-The 3 ABORTED rows in core-db correspond to txns where cloud-db prepare failed — correctly rolled back on core side, never written to cloud.
+The 3 ABORTED rows in core-db correspond to txns where cloud-db prepare failed - correctly rolled back on core side, never written to cloud.

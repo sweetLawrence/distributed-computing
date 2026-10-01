@@ -1,4 +1,4 @@
-M6 — row-level locking + deadlock detection
+M6 - row-level locking + deadlock detection
 =============================================
 Race test (unsafe mode, no FOR UPDATE):
   start: risk_probability = 0.4964

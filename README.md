@@ -1,4 +1,4 @@
-# Distributed Edge Computing Platform — Theme 5
+# Distributed Edge Computing Platform - Theme 5
 
 Smartwear health monitoring pipeline: **Device → Edge → Core → ML**, with a
 Cloud batch service. Runs as a Docker Swarm stack (single node by default;
@@ -6,28 +6,28 @@ scale to multi-node by adding workers with labels).
 
 ## What it demonstrates
 
-- **Dynamic placement at the edge** — Edge decides per-record whether to answer
+- **Dynamic placement at the edge** - Edge decides per-record whether to answer
   locally or forward to Core, using a score built from Core's latency, queue
   depth, and failure risk.
-- **Leader election** — Core replicas elect a leader through Redis (SETNX lock
+- **Leader election** - Core replicas elect a leader through Redis (SETNX lock
   with TTL). Only the leader performs writes.
-- **Two-phase commit across two databases** — flagged records are written
+- **Two-phase commit across two databases** - flagged records are written
   atomically to `core-db` and `cloud-db`. Either both commit, or both roll back.
-- **Row-level locking + deadlock detection** — concurrent writes to the same
+- **Row-level locking + deadlock detection** - concurrent writes to the same
   patient are serialized; deadlock scenario is manufacturable and inspected.
-- **Automated failure watchdog** — Edge detects Core death by heartbeat misses
+- **Automated failure watchdog** - Edge detects Core death by heartbeat misses
   and reroutes, without manual intervention.
-- **ML inference** — a FastAPI service serves an IsolationForest risk
+- **ML inference** - a FastAPI service serves an IsolationForest risk
   probability for flagged records.
 
 ## Repository layout
 
     services/
-      device/       Node/Express — reads CSV and streams rows to Edge
-      edge/         Node/Express — threshold check + placement score
-      core/         Node/Express — leader election, 2PC, ML RPC
-      core-ml/      Python/FastAPI — IsolationForest risk model
-      cloud/        Node/Express — periodic batch summary to cloud-db
+      device/       Node/Express - reads CSV and streams rows to Edge
+      edge/         Node/Express - threshold check + placement score
+      core/         Node/Express - leader election, 2PC, ML RPC
+      core-ml/      Python/FastAPI - IsolationForest risk model
+      cloud/        Node/Express - periodic batch summary to cloud-db
 
     infra/
       docker-stack.yml     Swarm deploy file with placement constraints
@@ -35,7 +35,7 @@ scale to multi-node by adding workers with labels).
       nginx-core/          (reserved; not used in current build)
 
     data/
-      smartwear_health_monitoring_dataset.csv     *** NOT in git — see below ***
+      smartwear_health_monitoring_dataset.csv     *** NOT in git - see below ***
 
     docs/
       milestones.md        consolidated milestone evidence log
@@ -59,7 +59,7 @@ Required columns (header order matters for the naive CSV parser):
 If you have a wider dataset, select these columns and save with the filename
 above. Place it under `data/`. The Device service streams it row by row.
 
-## Quickstart — Docker Compose (single host, dev)
+## Quickstart - Docker Compose (single host, dev)
 
     cp .env.example .env
     docker compose up --build -d
@@ -75,12 +75,12 @@ Then stream a slice of the CSV and read the stats:
     sleep 30
     curl http://localhost:3000/stats
 
-## Quickstart — Docker Swarm (single node today; multi-node later)
+## Quickstart - Docker Swarm (single node today; multi-node later)
 
 Prereq: a swarm manager node with three label sets:
 
     docker swarm init --advertise-addr <manager-ip>
-    # single node — emulate the roles so the same stack deploys:
+    # single node - emulate the roles so the same stack deploys:
     docker node update --label-add manager=true <manager-hostname>
     docker node update --label-add worker1=true <manager-hostname>
     docker node update --label-add worker2=true <manager-hostname>
@@ -121,14 +121,14 @@ On each worker VM:
 
 See `.env.example` for the full list. Notable knobs:
 
-| Var                    | Default | Meaning |
-| ---------------------- | ------- | ------- |
-| `STREAM_INTERVAL_MS`   | 200     | device pacing between rows |
-| `MAX_ROWS`             | 1000    | upper bound on rows streamed |
-| `PLACEMENT_THRESHOLD`  | 0.005   | edge threshold on placement score |
-| `CORE_HEARTBEAT_MS`    | 3000    | edge heartbeat interval |
-| `LEADER_TTL_MS`        | 10000   | redis leader lock TTL |
-| `FORCE_FORWARD`        | "0"     | edge kill switch: "1" forwards everything (baseline mode) |
+| Var                   | Default | Meaning                                                   |
+| --------------------- | ------- | --------------------------------------------------------- |
+| `STREAM_INTERVAL_MS`  | 200     | device pacing between rows                                |
+| `MAX_ROWS`            | 1000    | upper bound on rows streamed                              |
+| `PLACEMENT_THRESHOLD` | 0.005   | edge threshold on placement score                         |
+| `CORE_HEARTBEAT_MS`   | 3000    | edge heartbeat interval                                   |
+| `LEADER_TTL_MS`       | 10000   | redis leader lock TTL                                     |
+| `FORCE_FORWARD`       | "0"     | edge kill switch: "1" forwards everything (baseline mode) |
 
 ## Demos
 
@@ -156,9 +156,9 @@ Baseline vs proposed (edge placement):
 
 Captured numbers under `results/`:
 
-- `capstone-comparison.md` — baseline vs proposed metrics
+- `capstone-comparison.md` - baseline vs proposed metrics
 - `2pc-committed.txt`, `2pc-failure-demo.txt`
-- `m6-locking-deadlock.txt` — row-lock anomaly + deadlock detection
+- `m6-locking-deadlock.txt` - row-lock anomaly + deadlock detection
 - `m7-watchdog.txt`
 - `m9-migration.txt`
 - `leader-election.txt`

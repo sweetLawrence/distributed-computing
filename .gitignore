@@ -11,7 +11,7 @@ results/*.json
 results/*.csv
 *.log
 
-# data — do NOT commit the CSV (too big, and often licensed)
+# data - do NOT commit the CSV (too big, and often licensed)
 data/*.csv
 !data/.gitkeep
 

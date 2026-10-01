@@ -1,4 +1,4 @@
-2PC failure demo — cloud-db killed mid-commit
+2PC failure demo - cloud-db killed mid-commit
 ===============================================
 BEFORE:
   core-db:  COMMITTED=129  ABORTED=3
@@ -8,12 +8,12 @@ DURING cloud-db outage:
   core-db:  COMMITTED=346  ABORTED=18  PENDING=1
   Leader (core-1): commitCount=289 abortCount=15
   Logs: "[core:core-1] LEADER #N pid=X risk=0.Y txn=ABORT"
-  Delta: +15 ABORTED, +0 COMMITTED — no partial writes leaked through
+  Delta: +15 ABORTED, +0 COMMITTED - no partial writes leaked through
 
 AFTER cloud-db restored (8s):
   core-db:  COMMITTED=351  ABORTED=20
   cloud-db: COMMITTED=351
-  Matching counts again — atomicity held across the outage
+  Matching counts again - atomicity held across the outage
 
 Interpretation:
 - When cloud-db PREPARE failed, core-db's prepared row was ROLLED BACK

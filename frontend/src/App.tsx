@@ -30,6 +30,7 @@ import Failures from './pages/Failures'
 import Capstone from './pages/Capstone'
 import Reproducibility from './pages/Reproducibility'
 import Definitions from './pages/Definitions'
+import Story from './pages/Story'
 
 const NAV = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -39,7 +40,8 @@ const NAV = [
   { to: '/failures', label: 'Failures', icon: AlertTriangle },
   { to: '/capstone', label: 'Capstone', icon: BarChart3 },
   { to: '/reproducibility', label: 'Reproducibility', icon: BookOpen },
-  { to: '/definitions',     label: 'Definitions',     icon: BookMarked }
+  { to: '/definitions',     label: 'Definitions',     icon: BookMarked },
+  { to: '/story',           label: 'Story',           icon: BookOpen }
 ]
 
 export default function App () {
@@ -118,6 +120,7 @@ export default function App () {
           <Route path='/capstone' element={<Capstone />} />
           <Route path='/reproducibility' element={<Reproducibility />} />
           <Route path='/definitions'     element={<Definitions />} />
+          <Route path='/story'           element={<Story />} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
 

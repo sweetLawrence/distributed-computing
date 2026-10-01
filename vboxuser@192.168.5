@@ -286,7 +286,7 @@ services:
         published: 8090
         mode: ingress
     configs:
-      - source: proxy_conf_v5
+      - source: proxy_conf_v4
         target: /etc/nginx/nginx.conf
     networks: [appnet]
     deploy:
@@ -326,5 +326,5 @@ configs:
   prometheus_cfg_v1:
     file: ./prometheus/prometheus.yml
 
-  proxy_conf_v5:
+  proxy_conf_v4:
     file: ./proxy/nginx.conf

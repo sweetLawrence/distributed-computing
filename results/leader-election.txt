@@ -1,4 +1,4 @@
-Leader election demo — 2026-09-29
+Leader election demo - 2026-09-29
 Initial: core-2 leader, core-1 follower
 Kill core-2 at t=0
 Polling core-1 /health:
