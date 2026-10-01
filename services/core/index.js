@@ -67,6 +67,9 @@ app.post('/process', async (req, res) => {
       cacheResult = await mlcache.get(row.patient_id);
       if (cacheResult.hit) {
         riskProb = cacheResult.risk_probability;
+        metrics.mlCache.inc({ result: 'hit' });
+      } else {
+        metrics.mlCache.inc({ result: 'miss' });
       }
     }
     if (riskProb === null) {

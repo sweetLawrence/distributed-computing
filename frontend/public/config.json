@@ -1,0 +1,6 @@
+{
+  "apiBase": "http://192.168.56.11:8090/api",
+  "adminBase": "http://192.168.56.11:8090/admin",
+  "grafanaUrl": "http://192.168.56.11:3030",
+  "prometheusUrl": "http://192.168.56.11:8090/api/prom"
+}

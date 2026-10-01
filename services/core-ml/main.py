@@ -1,8 +1,10 @@
 import os
+import time
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 from sklearn.ensemble import IsolationForest
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import joblib
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/app/model.joblib")
@@ -11,6 +13,18 @@ CSV_PATH = os.environ.get("CSV_PATH", "/data/smartwear_health_monitoring_dataset
 app = FastAPI()
 model = None
 FEATURES = ["age", "bmi", "heart_rate", "systolic_bp", "diastolic_bp", "respiratory_rate"]
+
+# --- Prometheus metrics ---
+PREDICT_REQUESTS = Counter(
+    "ml_predict_requests_total",
+    "Total /predict requests",
+    ["status"]
+)
+PREDICT_DURATION = Histogram(
+    "ml_predict_duration_ms",
+    "Duration of /predict in ms",
+    buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000]
+)
 
 class PredictIn(BaseModel):
     age: float | None = None
@@ -35,7 +49,7 @@ def train_or_load():
     with open(CSV_PATH, newline="") as f:
         reader = csv.DictReader(f)
         for i, row in enumerate(reader):
-            if i >= 20000:  # cap training set for speed
+            if i >= 20000:
                 break
             try:
                 vec = [float(row[f]) for f in FEATURES]
@@ -58,26 +72,32 @@ def startup():
 def health():
     return {"service": "core-ml", "status": "ok", "model_loaded": model is not None}
 
+@app.get("/metrics")
+def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 @app.post("/predict")
 def predict(inp: PredictIn):
+    t0 = time.time()
     feats = [getattr(inp, f) for f in FEATURES]
     if any(v is None for v in feats):
-        # fallback: missing feature, return neutral
+        PREDICT_REQUESTS.labels(status="error").inc()
         return {"risk_probability": 0.5, "model_version": "fallback-missing"}
 
     if model is not None:
         x = np.array([feats])
-        # decision_function: negative = more anomalous. Map to 0..1 where 1 = anomalous.
-        raw = model.decision_function(x)[0]  # roughly -0.5..0.5
-        # shift + scale to 0..1, higher = more anomalous
+        raw = model.decision_function(x)[0]
         prob = float(np.clip(0.5 - raw, 0.0, 1.0))
+        PREDICT_REQUESTS.labels(status="ok").inc()
+        PREDICT_DURATION.observe((time.time() - t0) * 1000)
         return {"risk_probability": round(prob, 4), "model_version": "isoforest-v1"}
     else:
-        # formula fallback — z-score-ish
         hr, sbp, rr = inp.heart_rate, inp.systolic_bp, inp.respiratory_rate
         score = 0.0
         if hr and hr > 100: score += min((hr - 100) / 60, 1.0)
         if sbp and sbp > 140: score += min((sbp - 140) / 60, 1.0)
         if rr and rr > 20: score += min((rr - 20) / 15, 1.0)
         prob = min(score / 3, 1.0)
+        PREDICT_REQUESTS.labels(status="ok").inc()
+        PREDICT_DURATION.observe((time.time() - t0) * 1000)
         return {"risk_probability": round(prob, 4), "model_version": "formula-v1"}

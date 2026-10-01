@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+}
+
+code, pre, .mantine-Code-root, .mantine-CodeHighlight-root {
+  font-family: 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+/* === Blue + neutral palette ============================================= */
+
+:root,
+[data-mantine-color-scheme='light'] {
+  /* brand */
+  --primary: #0075DE;
+  --primary-hover: #0066C2;
+  --primary-active: #00549F;
+  --primary-soft: #EAF4FF;
+
+  /* backgrounds */
+  --background: #FFFFFF;
+  --background-secondary: #F7F9FC;
+  --background-tertiary: #EEF2F6;
+
+  /* surfaces */
+  --surface: #FFFFFF;
+  --surface-hover: #F8FAFD;
+
+  /* text */
+  --text-primary: #111827;
+  --text-secondary: #4B5563;
+  --text-muted: #6B7280;
+  --text-on-primary: #FFFFFF;
+
+  /* borders */
+  --border: #E2E8F0;
+  --border-strong: #CBD5E1;
+
+  /* status */
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0075DE;
+}
+
+[data-mantine-color-scheme='dark'] {
+  --primary: #3D9AFF;
+  --primary-hover: #66AEFF;
+  --primary-active: #80BCFF;
+  --primary-soft: #062E55;
+
+  --background: #0B1118;
+  --background-secondary: #111923;
+  --background-tertiary: #182330;
+
+  --surface: #111923;
+  --surface-hover: #172330;
+
+  --text-primary: #F1F5F9;
+  --text-secondary: #CBD5E1;
+  --text-muted: #94A3B8;
+  --text-on-primary: #FFFFFF;
+
+  --border: #263342;
+  --border-strong: #344457;
+
+  --success: #4ADE80;
+  --warning: #FBBF24;
+  --danger: #F87171;
+  --info: #3D9AFF;
+}
+
+/* === Mantine token overrides ============================================ */
+
+/* light mode - Mantine sets these on [data-mantine-color-scheme='light'] */
+[data-mantine-color-scheme='light'] {
+  --mantine-color-body: var(--background);
+  --mantine-color-default: var(--surface);
+  --mantine-color-default-hover: var(--surface-hover);
+  --mantine-color-default-border: var(--border);
+  --mantine-color-text: var(--text-primary);
+  --mantine-color-dimmed: var(--text-muted);
+  --mantine-color-anchor: var(--primary);
+  --mantine-color-placeholder: var(--text-muted);
+
+  --mantine-color-gray-0: #FFFFFF;
+  --mantine-color-gray-1: #F7F9FC;
+  --mantine-color-gray-2: #EEF2F6;
+  --mantine-color-gray-3: #E2E8F0;
+  --mantine-color-gray-4: #CBD5E1;
+  --mantine-color-gray-5: #94A3B8;
+  --mantine-color-gray-6: #6B7280;
+  --mantine-color-gray-7: #4B5563;
+  --mantine-color-gray-8: #1F2937;
+  --mantine-color-gray-9: #111827;
+
+  --mantine-color-dark-0: #EEF2F6;
+  --mantine-color-dark-1: #E2E8F0;
+  --mantine-color-dark-2: #CBD5E1;
+  --mantine-color-dark-3: #94A3B8;
+  --mantine-color-dark-4: #6B7280;
+  --mantine-color-dark-5: #4B5563;
+  --mantine-color-dark-6: #1F2937;
+  --mantine-color-dark-7: #111827;
+  --mantine-color-dark-8: #0B1118;
+  --mantine-color-dark-9: #060B12;
+}
+
+/* dark mode */
+[data-mantine-color-scheme='dark'] {
+  --mantine-color-body: var(--background);
+  --mantine-color-default: var(--surface);
+  --mantine-color-default-hover: var(--surface-hover);
+  --mantine-color-default-border: var(--border);
+  --mantine-color-text: var(--text-primary);
+  --mantine-color-dimmed: var(--text-muted);
+  --mantine-color-anchor: var(--primary);
+  --mantine-color-placeholder: var(--text-muted);
+
+  --mantine-color-dark-0: #E2E8F0;
+  --mantine-color-dark-1: #CBD5E1;
+  --mantine-color-dark-2: #94A3B8;
+  --mantine-color-dark-3: #64748B;
+  --mantine-color-dark-4: #344457;
+  --mantine-color-dark-5: #263342;
+  --mantine-color-dark-6: #1A2330;
+  --mantine-color-dark-7: #182330;
+  --mantine-color-dark-8: #111923;
+  --mantine-color-dark-9: #0B1118;
+}
+
+/* === small responsive helpers =========================================== */
+@media (max-width: 36em) {
+  .app-title { font-size: 14px; }
+  .app-title-short { display: inline; }
+  .app-title-long  { display: none; }
+}
+@media (min-width: 36.0625em) {
+  .app-title-short { display: none; }
+  .app-title-long  { display: inline; }
+}
+
+/* titles inherit primary text */
+.mantine-Title-root {
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}

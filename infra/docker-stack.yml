@@ -254,7 +254,65 @@ services:
         limits: { cpus: "0.25", memory: 256M }
       restart_policy: { condition: any, delay: 5s }
 
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - target: 3000
+        published: 3030
+        mode: ingress
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - /home/vboxuser/distributed-edge-platform/infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - /home/vboxuser/distributed-edge-platform/infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      resources:
+        limits: { cpus: "1.00", memory: 1G }
+      restart_policy: { condition: any, delay: 5s }
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - target: 80
+        published: 8090
+        mode: ingress
+    configs:
+      - source: proxy_conf_v4
+        target: /etc/nginx/nginx.conf
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+      restart_policy: { condition: any, delay: 5s }
+
+  admin:
+    image: dep-admin:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/vboxuser/distributed-edge-platform/infra/docker-stack.yml:/stack/docker-stack.yml:ro
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+      restart_policy: { condition: any, delay: 5s }
+
 volumes:
+  grafana-data:
   core-db-data:
   cloud-db-data:
 
@@ -267,3 +325,6 @@ configs:
 
   prometheus_cfg_v1:
     file: ./prometheus/prometheus.yml
+
+  proxy_conf_v4:
+    file: ./proxy/nginx.conf

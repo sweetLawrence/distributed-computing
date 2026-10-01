@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# Drop any pre-existing "Prometheus" datasource before re-provisioning.
+# Without this, Grafana refuses to update an existing datasource's UID in place.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
