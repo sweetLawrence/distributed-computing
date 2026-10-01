@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
-  Container, Title, Text, Stack, Card, Badge, Group, TextInput, Box,
-  SegmentedControl,
+  Container, Title, Text, Stack, Card, Badge, Group, TextInput,
+  SegmentedControl, Select, Box
 } from '@mantine/core';
 import { BookMarked, Search } from 'lucide-react';
 import { DEFINITIONS } from '../content/definitions';
@@ -37,6 +37,11 @@ export default function Definitions() {
     });
   }, [q, cat]);
 
+  const selectData = CATEGORIES.map((c) => ({
+    value: c,
+    label: c === 'All' ? 'All categories' : c
+  }));
+
   return (
     <Container size="lg" px={{ base: 'xs', sm: 'md' }}>
       <Stack gap="lg">
@@ -59,12 +64,25 @@ export default function Definitions() {
               onChange={(e) => setQ(e.currentTarget.value)}
               leftSection={<Search size={16} />}
             />
-            <SegmentedControl
-              fullWidth
-              value={cat}
-              onChange={setCat}
-              data={CATEGORIES.map((c) => ({ label: c, value: c }))}
-            />
+
+            {/* SegmentedControl on tablets/desktop, Select on phones */}
+            <Box visibleFrom="sm">
+              <SegmentedControl
+                fullWidth
+                value={cat}
+                onChange={setCat}
+                data={CATEGORIES.map((c) => ({ label: c, value: c }))}
+              />
+            </Box>
+            <Box hiddenFrom="sm">
+              <Select
+                value={cat}
+                onChange={(v) => setCat(v ?? 'All')}
+                data={selectData}
+                allowDeselect={false}
+                checkIconPosition="right"
+              />
+            </Box>
           </Stack>
         </Card>
 
@@ -78,7 +96,7 @@ export default function Definitions() {
           {filtered.map((d) => (
             <Card key={d.term} withBorder>
               <Stack gap="sm">
-                <Group justify="space-between" wrap="wrap">
+                <Group justify="space-between" wrap="wrap" gap="xs">
                   <Text fw={700} size="lg">{d.term}</Text>
                   <Badge color={CATEGORY_COLOR[d.category]} variant="light">
                     {d.category}

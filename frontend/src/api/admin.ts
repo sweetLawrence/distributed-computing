@@ -59,3 +59,45 @@ export const adminApi = {
       method: 'POST'
     })
 }
+
+// ---------- cluster ----------
+export interface ClusterNode {
+  hostname: string;
+  status: string;
+  availability: string;
+  managerStatus: string | null;
+  role: 'manager' | 'worker';
+  labels: Record<string, string>;
+  heartbeatAgeMs: number | null;
+  taskCount: number;
+}
+
+export interface ClusterTask {
+  id: string;
+  name: string;
+  node: string;
+  desiredState: string;
+  currentState: string;
+  error: string | null;
+}
+
+export interface ClusterService {
+  name: string;
+  fullName: string;
+  desiredReplicas: string;
+  tasks: ClusterTask[];
+}
+
+export interface ClusterEvent {
+  time: number;
+  type: string;
+  action: string;
+  name: string;
+  node: string | null;
+}
+
+export const clusterApi = {
+  nodes: () => adminFetch<{ nodes: ClusterNode[]; now: number }>('/cluster/nodes'),
+  tasks: () => adminFetch<{ services: ClusterService[] }>('/cluster/tasks'),
+  events: (since = 300) => adminFetch<{ events: ClusterEvent[]; sinceSeconds: number }>(`/cluster/events?since=${since}`)
+};

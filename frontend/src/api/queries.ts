@@ -32,3 +32,10 @@ import { adminApi } from './admin';
 
 export const useAdminNodes    = () => useQuery({ queryKey: ['admin-nodes'],    queryFn: adminApi.nodes,    refetchInterval: 10000, retry: 0 });
 export const useAdminServices = () => useQuery({ queryKey: ['admin-services'], queryFn: adminApi.services, refetchInterval: 10000, retry: 0 });
+
+// ---------- cluster (via admin) ----------
+import { clusterApi } from './admin';
+
+export const useClusterNodes  = () => useQuery({ queryKey: ['cluster-nodes'],  queryFn: clusterApi.nodes,  refetchInterval: 5000,  retry: 0 });
+export const useClusterTasks  = () => useQuery({ queryKey: ['cluster-tasks'],  queryFn: clusterApi.tasks,  refetchInterval: 5000,  retry: 0 });
+export const useClusterEvents = () => useQuery({ queryKey: ['cluster-events'], queryFn: () => clusterApi.events(300), refetchInterval: 10000, retry: 0 });

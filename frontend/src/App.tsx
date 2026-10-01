@@ -17,6 +17,7 @@ import {
   AlertTriangle,
   BarChart3,
   BookOpen,
+  Activity,
   BookMarked,
   Sun,
   Moon
@@ -31,6 +32,7 @@ import Capstone from './pages/Capstone'
 import Reproducibility from './pages/Reproducibility'
 import Definitions from './pages/Definitions'
 import Story from './pages/Story'
+import Cluster from './pages/Cluster'
 import { ScrollToTop } from './components/ScrollToTop'
 
 const NAV = [
@@ -42,7 +44,8 @@ const NAV = [
   { to: '/capstone', label: 'Capstone', icon: BarChart3 },
   { to: '/reproducibility', label: 'Reproducibility', icon: BookOpen },
   { to: '/definitions',     label: 'Definitions',     icon: BookMarked },
-  { to: '/story',           label: 'Story',           icon: BookOpen }
+  { to: '/story',           label: 'Story',           icon: BookOpen },
+  { to: '/cluster',         label: 'Cluster',         icon: Activity }
 ]
 
 export default function App () {
@@ -123,6 +126,7 @@ export default function App () {
           <Route path='/reproducibility' element={<Reproducibility />} />
           <Route path='/definitions'     element={<Definitions />} />
           <Route path='/story'           element={<Story />} />
+          <Route path='/cluster'         element={<Cluster />} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
 
