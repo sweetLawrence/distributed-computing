@@ -779,4 +779,91 @@ app.post('/milestones/m2/stats', async (_req, res) => {
   }
 })
 
+
+// ---------- CLUSTER VIEW ENDPOINTS ----------
+
+app.get('/cluster/nodes', async (_req, res) => {
+  try {
+    const out = await run('docker', ['node', 'ls', '--format', '{{json .}}']);
+    const raw = out.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const now = Date.now();
+    const nodes = [];
+    for (const n of raw) {
+      const inspect = JSON.parse(await run('docker', ['node', 'inspect', n.Hostname]))[0];
+      const updatedAt = new Date(inspect.UpdatedAt).getTime();
+      const heartbeatAgeMs = Number.isFinite(updatedAt) ? now - updatedAt : null;
+      const tasksOut = await run('docker', ['node', 'ps', n.Hostname, '--format', '{{.Name}}']);
+      const taskCount = tasksOut.trim().split('\n').filter(Boolean).length;
+      nodes.push({
+        hostname: n.Hostname,
+        status: n.Status,
+        availability: n.Availability,
+        managerStatus: n.ManagerStatus || null,
+        role: (inspect.Spec.Role || 'worker').toLowerCase(),
+        labels: inspect.Spec.Labels || {},
+        heartbeatAgeMs,
+        taskCount
+      });
+    }
+    res.json({ nodes, now });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: e.message });
+  }
+});
+
+app.get('/cluster/tasks', async (_req, res) => {
+  try {
+    const svcOut = await run('docker', ['stack', 'services', STACK]);
+    const svcLines = svcOut.trim().split('\n').slice(1);
+    const services = [];
+    for (const line of svcLines) {
+      const parts = line.trim().split(/\s{2,}/);
+      const name = parts[1];
+      const psOut = await run('docker', ['service', 'ps', name, '--no-trunc', '--format', '{{json .}}']);
+      const tasks = psOut.trim().split('\n').filter(Boolean).map((l) => {
+        try { return JSON.parse(l); } catch { return null; }
+      }).filter(Boolean);
+      services.push({
+        name: name.replace('theme5_', ''),
+        fullName: name,
+        desiredReplicas: parts[3],
+        tasks: tasks.map((t) => ({
+          id: t.ID,
+          name: t.Name,
+          node: t.Node,
+          desiredState: t.DesiredState,
+          currentState: t.CurrentState,
+          error: t.Error || null
+        }))
+      });
+    }
+    res.json({ services });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: e.message });
+  }
+});
+
+app.get('/cluster/events', async (req, res) => {
+  const since = Math.min(parseInt(req.query.since || '300', 10), 3600);
+  try {
+    const out = await run(
+      'docker',
+      ['events', '--since', `${since}s`,
+       '--filter', 'type=service',
+       '--filter', 'type=node',
+       '--filter', 'type=container',
+       '--format', '{{.Time}}|{{.Type}}|{{.Action}}|{{.Actor.Attributes.name}}|{{.Actor.Attributes.node.name}}'],
+      8000
+    );
+    const lines = out.trim().split('\n').filter(Boolean);
+    const events = lines.map((l) => {
+      const [time, type, action, name, node] = l.split('|');
+      return { time: parseInt(time, 10) || 0, type, action, name, node: node || null };
+    }).sort((a, b) => b.time - a.time);
+    res.json({ events, sinceSeconds: since });
+  } catch (e) {
+    res.json({ events: [], sinceSeconds: since, note: 'no events or stream timed out' });
+  }
+});
+
 app.listen(PORT, () => console.log(`[admin] listening on ${PORT}`))
