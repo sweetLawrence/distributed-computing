@@ -31,3 +31,16 @@ else
 fi
 
 echo "=== Joined Swarm ==="
+
+
+# ... existing join swarm code ...
+
+echo "=== Loading Images from manager ==="
+sleep 40 # Wait for manager to copy the images
+
+for img in dep-device dep-edge dep-core dep-cloud dep-core-ml dep-admin; do
+  if [ -f /tmp/$img.tar ]; then
+    docker load -i /tmp/$img.tar
+  fi
+done
+echo "=== Images loaded ==="

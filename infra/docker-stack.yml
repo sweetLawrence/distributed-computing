@@ -2,7 +2,6 @@ version: "3.8"
 
 services:
 
-  # ---------- data stores ----------
   core-db:
     image: postgres:16-alpine
     environment:
@@ -48,7 +47,6 @@ services:
         limits: { cpus: "0.25", memory: 128M }
       restart_policy: { condition: any, delay: 5s }
 
-  # ---------- application ----------
   device:
     image: dep-device:latest
     ports:
@@ -61,7 +59,7 @@ services:
       STREAM_INTERVAL_MS: 200
       MAX_ROWS: 200
     volumes:
-      - /home/vboxuser/distributed-edge-platform/data:/data:ro
+      - /vagrant/data:/data:ro
     networks: [appnet]
     deploy:
       replicas: 1
@@ -162,7 +160,7 @@ services:
         published: 5000
         mode: ingress
     volumes:
-      - /home/vboxuser/distributed-edge-platform/data:/data:ro
+      - /vagrant/data:/data:ro
     networks: [appnet]
     deploy:
       replicas: 1
@@ -268,8 +266,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - grafana-data:/var/lib/grafana
-      - /home/vboxuser/distributed-edge-platform/infra/grafana/provisioning:/etc/grafana/provisioning:ro
-      - /home/vboxuser/distributed-edge-platform/infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - /vagrant/infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - /vagrant/infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks: [appnet]
     deploy:
       replicas: 1
@@ -301,7 +299,7 @@ services:
     image: dep-admin:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /home/vboxuser/distributed-edge-platform/infra/docker-stack.yml:/stack/docker-stack.yml:ro
+      - /vagrant/infra/docker-stack.yml:/stack/docker-stack.yml:ro
     networks: [appnet]
     deploy:
       replicas: 1
@@ -319,12 +317,11 @@ volumes:
 networks:
   appnet:
     attachable: true
+
 configs:
   nginx_edge_conf_v3:
     file: ./nginx-edge/nginx.conf
-
   prometheus_cfg_v1:
     file: ./prometheus/prometheus.yml
-
   proxy_conf_v5:
     file: ./proxy/nginx.conf
