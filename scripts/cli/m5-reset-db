@@ -1,0 +1,13 @@
+cat > ~/bin/m5-m6-reset-db << 'EOF'
+#!/usr/bin/env bash
+echo "=== RESETTING DATABASES ==="
+echo "[1] Truncating core-db..."
+sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -c "TRUNCATE TABLE core_records;" > /dev/null
+
+echo "[2] Truncating cloud-db..."
+sudo docker run --rm --network theme5_appnet -e PGPASSWORD=cloudpass postgres:16-alpine psql -h cloud-db -U cloud -d cloud -c "TRUNCATE TABLE cloud_summaries;" > /dev/null
+
+echo ""
+echo "DATABASES RESET. You can now run the demo."
+EOF
+chmod +x ~/bin/m5-m6-reset-db

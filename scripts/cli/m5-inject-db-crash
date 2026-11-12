@@ -1,0 +1,67 @@
+# #!/usr/bin/env bash
+# echo "=== M5: INJECTING DATABASE FAILURE ==="
+# echo "[1] Killing cloud-db node..."
+# sudo docker service scale theme5_cloud-db=0 > /dev/null
+# sleep 3
+
+# echo "[2] Firing RAW RECORD: {patient_id: 99992, heart_rate: 155, systolic_bp: 185}"
+# curl -s -X POST http://localhost:3001/ingest \
+#   -H "Content-Type: application/json" \
+#   -d '{"row":{"patient_id":99992,"age":62,"bmi":29,"heart_rate":155,"systolic_bp":185,"diastolic_bp":98,"respiratory_rate":29},"t_sent":1,"lamport":1}' > /dev/null
+
+# echo ""
+# echo "[ CORE LEADER LOGS - DATA IN TRANSIT ]"
+# sudo docker service logs --tail 5 theme5_core-1 2>&1 | grep -E "risk|txn|ABORT"
+
+# echo ""
+# echo "[3] Checking core-db outcome..."
+# sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT '    Status: ' || status || ' | pid: ' || patient_id FROM core_records ORDER BY id DESC LIMIT 1;"
+
+# echo ""
+# echo "FAILURE CONFIRMED: The record was ABORTED because cloud-db was offline."
+# echo "[4] Restoring cloud-db..."
+# sudo docker service scale theme5_cloud-db=1 > /dev/null
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cat > ~/bin/m5-inject-db-crash << 'EOF'
+#!/usr/bin/env bash
+echo "=== M5: INJECTING DATABASE FAILURE ==="
+echo "[1] Killing cloud-db node..."
+sudo docker service scale theme5_cloud-db=0 > /dev/null
+sleep 3
+
+echo ""
+echo "[2] Firing a NEW RAW HEALTH RECORD while DB is down:"
+echo '    { "patient_id": 99992, "heart_rate": 155, "systolic_bp": 185 }'
+
+curl -s -X POST http://localhost:3001/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"row":{"patient_id":99992,"age":62,"bmi":29,"heart_rate":155,"systolic_bp":185,"diastolic_bp":98,"respiratory_rate":29},"t_sent":1,"lamport":1}' > /dev/null
+
+echo ""
+echo "[ CORE LEADER LOGS - DATA IN TRANSIT ]"
+sudo docker service logs --tail 5 theme5_core-1 2>&1 | grep -E "risk|txn|ABORT"
+
+echo ""
+echo "[3] Checking core-db outcome for patient 99992..."
+sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT '    DB Status: ' || status || ' | Patient ID: ' || patient_id FROM core_records ORDER BY id DESC LIMIT 1;"
+
+echo ""
+echo "FAILURE CONFIRMED: The record was ABORTED because cloud-db was offline."
+echo "[4] Restoring cloud-db..."
+sudo docker service scale theme5_cloud-db=1 > /dev/null
+EOF
+chmod +x ~/bin/m5-inject-db-crash

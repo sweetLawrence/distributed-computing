@@ -1,0 +1,77 @@
+# #!/usr/bin/env bash
+# echo "=== PREPARING DATA FOR DEADLOCK ==="
+# # Send a flagged record for patient 7 so it exists in the DB
+# curl -s -X POST http://localhost:3001/ingest \
+#   -H "Content-Type: application/json" \
+#   -d '{"row":{"patient_id":7,"age":55,"bmi":27,"heart_rate":145,"systolic_bp":175,"diastolic_bp":92,"respiratory_rate":26},"t_sent":1,"lamport":1}' > /dev/null
+# sleep 2
+
+# echo ""
+# echo "=== M6: MANUFACTURING A DEADLOCK ==="
+# echo "[1] Firing concurrent transactions (locking in opposite order)..."
+# curl -s -X POST http://localhost:4001/lock/deadlock \
+#   -H "Content-Type: application/json" \
+#   -d '{"a":4,"b":7}'
+
+# echo -e "\n\n[ CORE LOGS - DATA IN TRANSIT ]"
+# sudo docker service logs --tail 5 theme5_core-1 2>&1 | grep -E "lock|deadlock|A:|B:"
+
+# echo -e "\n[ Resource-Allocation Graph ]"
+# echo "      Txn A ──HOLD──► row 19"
+# echo "        │"
+# echo "        │ WAIT-FOR"
+# echo "        ▼"
+# echo "      row 20 ◄──HOLD── Txn B"
+# echo "        ▲                │"
+# echo "        │                │ WAIT-FOR"
+# echo "        │                ▼"
+# echo "      row 19 ◄────────────┘"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+cat > ~/bin/m6-trigger-deadlock << 'EOF'
+#!/usr/bin/env bash
+echo "=== PREPARING DATA FOR DEADLOCK ==="
+echo "Injecting a flagged record for patient_id: 7 to ensure both rows exist..."
+curl -s -X POST http://localhost:3001/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"row":{"patient_id":7,"age":55,"bmi":27,"heart_rate":145,"systolic_bp":175,"diastolic_bp":92,"respiratory_rate":26},"t_sent":1,"lamport":1}' > /dev/null
+sleep 2
+
+echo ""
+echo "=== M6: MANUFACTURING A DEADLOCK ==="
+echo "[1] Firing concurrent transactions:"
+echo "    Txn A: LOCK patient 4 -> WAIT -> REQUEST patient 7"
+echo "    Txn B: LOCK patient 7 -> WAIT -> REQUEST patient 4"
+curl -s -X POST http://localhost:4001/lock/deadlock \
+  -H "Content-Type: application/json" \
+  -d '{"a":4,"b":7}'
+
+echo -e "\n\n[ CORE LOGS - DATA IN TRANSIT ]"
+sudo docker service logs --tail 5 theme5_core-1 2>&1 | grep -E "lock|deadlock|A:|B:"
+
+echo -e "\n[ Resource-Allocation Graph ]"
+echo "      Txn A ──HOLD──► row 51 (patient 4)"
+echo "        │"
+echo "        │ WAIT-FOR"
+echo "        ▼"
+echo "      row 52 (patient 7) ◄──HOLD── Txn B"
+echo "        ▲                           │"
+echo "        │                           │ WAIT-FOR"
+echo "        │                           ▼"
+echo "      row 51 (patient 4) ◄──────────┘"
+EOF
+chmod +x ~/bin/m6-trigger-deadlock

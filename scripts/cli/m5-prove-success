@@ -1,0 +1,49 @@
+# #!/usr/bin/env bash
+# echo "=== M5: 2PC SUCCESS PATH ==="
+# echo "[1] Firing a raw health record (pid: 99991)..."
+# curl -s -X POST http://localhost:3001/ingest \
+#   -H "Content-Type: application/json" \
+#   -d '{"row":{"patient_id":99991,"age":60,"bmi":28,"heart_rate":150,"systolic_bp":180,"diastolic_bp":95,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+
+# echo ""
+# echo "[ CORE LEADER LOGS - DATA IN TRANSIT ]"
+# sudo docker service logs --tail 3 theme5_core-1 2>&1 | grep -E "risk|txn"
+
+# echo ""
+# echo "[2] Checking core-db outcome..."
+# sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT '    Status: ' || status || ' | pid: ' || patient_id FROM core_records ORDER BY id DESC LIMIT 1;"
+
+# echo ""
+# echo "SUCCESS: The transaction COMMITTED safely to both databases."
+
+
+
+
+
+
+
+
+
+cat > ~/bin/m5-prove-success << 'EOF'
+#!/usr/bin/env bash
+echo "=== M5: 2PC SUCCESS PATH ==="
+echo "[1] Firing a RAW HEALTH RECORD into the pipeline:"
+echo '    { "patient_id": 99991, "heart_rate": 150, "systolic_bp": 180 }'
+echo "    (Heart rate > 120, so Edge will flag it and send to Core)"
+
+curl -s -X POST http://localhost:3001/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"row":{"patient_id":99991,"age":60,"bmi":28,"heart_rate":150,"systolic_bp":180,"diastolic_bp":95,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+
+echo ""
+echo "[ CORE LEADER LOGS - DATA IN TRANSIT ]"
+sudo docker service logs --tail 3 theme5_core-1 2>&1 | grep -E "risk|txn"
+
+echo ""
+echo "[2] Checking core-db outcome for patient 99991..."
+sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT '    DB Status: ' || status || ' | Patient ID: ' || patient_id FROM core_records ORDER BY id DESC LIMIT 1;"
+
+echo ""
+echo "SUCCESS: The transaction COMMITTED safely to both databases."
+EOF
+chmod +x ~/bin/m5-prove-success

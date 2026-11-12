@@ -1,0 +1,36 @@
+cat > ~/bin/m5-m6-full-demo << 'EOF'
+#!/usr/bin/env bash
+
+echo "======================================================"
+echo "   ICS 2403: MILESTONES 5 & 6 FULL DEMONSTRATION"
+echo "======================================================"
+
+echo ""
+echo ">>> STEP 1: RESETTING DATABASES <<<"
+m5-m6-reset-db
+
+echo ""
+echo ">>> STEP 2: M5 SUCCESS PATH <<<"
+m5-prove-success
+sleep 2
+
+echo ""
+echo ">>> STEP 3: M5 FAILURE INJECTION <<<"
+m5-inject-db-crash
+sleep 3
+
+echo ""
+echo ">>> STEP 4: M6 RACE CONDITION <<<"
+m6-race
+sleep 2
+
+echo ""
+echo ">>> STEP 5: M6 DEADLOCK DETECTION <<<"
+m6-trigger-deadlock
+
+echo ""
+echo "======================================================"
+echo "   DEMONSTRATION COMPLETE"
+echo "======================================================"
+EOF
+chmod +x ~/bin/m5-m6-full-demo

@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+watch -n 2 "sudo docker exec \$(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -c \"SELECT status, COUNT(*) FROM core_records GROUP BY status;\""

@@ -1,0 +1,48 @@
+# #!/usr/bin/env bash
+# echo "=== PREPARING DATA ==="
+# # Fire one FLAGGED record so it actually gets written to the database
+# curl -s -X POST http://localhost:3001/ingest \
+#   -H "Content-Type: application/json" \
+#   -d '{"row":{"patient_id":4,"age":40,"bmi":22.5,"heart_rate":150,"systolic_bp":180,"diastolic_bp":90,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+# sleep 2
+
+# echo ""
+# echo "=== UNSAFE RACE CONDITION (Lost Update) ==="
+# curl -s -X POST http://localhost:4001/lock/race -H "Content-Type: application/json" -d '{"patient_id":4,"mode":"unsafe"}'
+# echo -e "\n"
+
+# echo "=== SAFE RACE (MUTUAL EXCLUSION) ==="
+# curl -s -X POST http://localhost:4001/lock/race -H "Content-Type: application/json" -d '{"patient_id":4,"mode":"safe"}'
+# echo -e "\n"
+
+
+
+
+
+
+
+
+
+
+
+cat > ~/bin/m6-race << 'EOF'
+#!/usr/bin/env bash
+echo "=== PREPARING DATA ==="
+echo "Injecting a flagged record for patient_id: 4 to create the row..."
+curl -s -X POST http://localhost:3001/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"row":{"patient_id":4,"age":40,"bmi":22.5,"heart_rate":150,"systolic_bp":180,"diastolic_bp":90,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+sleep 2
+
+echo ""
+echo "=== UNSAFE RACE CONDITION (Lost Update) ==="
+echo "Firing TWO concurrent +0.01 updates for patient 4 without locks..."
+curl -s -X POST http://localhost:4001/lock/race -H "Content-Type: application/json" -d '{"patient_id":4,"mode":"unsafe"}'
+echo -e "\n"
+
+echo "=== SAFE RACE (MUTUAL EXCLUSION) ==="
+echo "Firing TWO concurrent +0.01 updates for patient 4 WITH row locks..."
+curl -s -X POST http://localhost:4001/lock/race -H "Content-Type: application/json" -d '{"patient_id":4,"mode":"safe"}'
+echo -e "\n"
+EOF
+chmod +x ~/bin/m6-race
