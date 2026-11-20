@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# ICS 2403 Milestone 7: Fault Tolerance and Recovery
+# Terminal 4 (driver): stream data, crash the leader, measure MTTR, stream again, restore.
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+csv_row(){ # prints one REAL random row from the dataset, column by column
+  [ -r "$CSV" ] || { echo "  (dataset not found at $CSV)"; return; }
+  local total pick
+  total=$(wc -l < "$CSV")
+  pick=$(( (RANDOM * 32768 + RANDOM) % (total - 1) + 2 ))
+  printf "${G}  Real record: line %s of %s in %s${N}\n" "$pick" "$total" "$(basename "$CSV")"
+  awk -F',' -v p="$pick" '{gsub(/\r/,"")} NR==1{for(i=1;i<=NF;i++)h[i]=$i} NR==p{for(i=1;i<=NF;i++) printf "    %-30s %s\n", h[i], $i; exit}' "$CSV"
+}
+STREAM_SECS="${STREAM_SECS:-8}"
+TIMEOUT_MS="${TIMEOUT_MS:-60000}"
+MTTR_LOG="${MTTR_LOG:-/vagrant/m7_mttr_runs.log}"
+touch "$MTTR_LOG" 2>/dev/null || MTTR_LOG=/tmp/m7_mttr_runs.log
+step(){ printf "\n${B}${Y}[STEP %s] %s${N}  (%s)\n" "$1" "$2" "$(ts)"; }
+stream(){ curl -s -m 5 -X POST "http://$IP:$DEVICE_PORT/start" >/dev/null 2>&1 \
+          && echo "  Device service started streaming readings (POST :$DEVICE_PORT/start)" \
+          || echo "  ${R}Could not reach the Device service on :$DEVICE_PORT${N}"; }
+
+banner "MILESTONE 7: FAULT TOLERANCE AND RECOVERY"
+term "Fault Modeling" "Deciding in advance WHICH failures the system must survive and HOW they behave. Our model: a Core replica can crash (fail-stop). The other replica, Redis and both databases stay up."
+
+# ---------------------------------------------------------------- STEP 1
+step 1 "Pre-flight: find the active leader"
+for rep in core-1 core-2; do
+  n=$($D ps -q -f name="${STACK}_${rep}." | wc -l)
+  if [ "$n" -gt 1 ]; then
+    echo "  ${R}${B}$n running containers for $rep on this node. Swarm has lost track of some (zombies).${N}"
+    echo "  ${R}They keep renewing the leader lock in Redis, so failover cannot happen. Clean up first:${N}"
+    echo "    sudo docker ps -a --format '{{.ID}} {{.Names}}' | grep ${STACK}_${rep} | awk '{print \$1}' | xargs -r sudo docker rm -f"
+    echo "    sudo docker service scale ${STACK}_${rep}=1"
+    exit 1
+  fi
+done
+if   is_leader "$C1_PORT"; then LEADER=core-1; STANDBY=core-2
+elif is_leader "$C2_PORT"; then LEADER=core-2; STANDBY=core-1
+else echo "  ${R}No replica reports isLeader:true. Check: curl http://$IP:4001/health${N}"; exit 1; fi
+LP=$(port_of "$LEADER"); SP=$(port_of "$STANDBY")
+is_up "$SP" || { echo "  ${R}Standby $STANDBY is not healthy, failover would be impossible. Fix it first.${N}"; exit 1; }
+echo "  Leader (coordinator): ${G}${B}$LEADER${N}  on :$LP"
+echo "  Standby (replica)   : ${C}${B}$STANDBY${N} on :$SP"
+[ "$LEADER" = "core-2" ] && echo "  ${Y}NOTE: core-2 is the leader this time. In Terminal 2 run: m7-watch-core2 core-1${N}"
+term "Replication" "Running more than one copy of a component so a copy can take over when one fails. Here: 2 Core replicas, one leader and one standby."
+T_START=$(now_ms)
+
+# ---------------------------------------------------------------- STEP 2
+step 2 "Normal operation: stream real data through $LEADER"
+csv_row
+C_BEFORE=$(committed); stream; sleep "$STREAM_SECS"; C_AFTER=$(committed)
+echo "  COMMITTED in core-db: $C_BEFORE -> ${G}$C_AFTER${N}  (processed by $LEADER)"
+
+# ---------------------------------------------------------------- STEP 3
+step 3 "INJECT FAULT: crash the leader ($LEADER)"
+term "Crash Failure" "A process stops suddenly and does nothing afterwards: no reply, no goodbye, no cleanup. We simulate it by killing the leader's container."
+NODE=$($D service ps "${STACK}_$LEADER" --filter desired-state=running --format '{{.Node}}' | head -1)
+ME=$($D info -f '{{.Name}}' 2>/dev/null)
+T0=$(now_ms)
+$D service scale -d "${STACK}_$LEADER=0" >/dev/null 2>&1   # stop Swarm from restarting it, so the STANDBY must take over
+CID=$($D ps -q -f name="${STACK}_${LEADER}." | head -1)
+if [ -n "$CID" ]; then $D kill -s KILL "$CID" >/dev/null 2>&1; HOW="SIGKILL on $ME (hard crash, no cleanup)"
+else HOW="Swarm stop on node $NODE (container not on this node)"; fi
+printf "  ${R}${B}X  %s KILLED at %s${N}  via %s\n" "$LEADER" "$(ts)" "$HOW"
+
+# ---------------------------------------------------------------- STEP 4
+step 4 "Failure detection and failover"
+term "Failure Detection" "Noticing that a component has failed. A crashed process cannot announce its own death, so others use timeouts: the leader lock in Redis has a 10 s TTL and expires when no heartbeat renews it."
+term "Failover" "Automatically switching work from the failed component to a healthy replica."
+DETECTED=""; T1=""
+while :; do
+  t=$(now_ms); el=$(( t - T0 ))
+  if [ -z "$DETECTED" ] && ! is_up "$LP"; then DETECTED=$el
+    printf "\r\e[K  ${Y}Health probe to %s failed after %d ms: failure detected${N}\n" "$LEADER" "$el"; fi
+  if is_leader "$SP"; then T1=$t; break; fi
+  [ "$el" -gt "$TIMEOUT_MS" ] && { echo; echo "  ${R}No new leader after $((TIMEOUT_MS/1000)) s. Aborting.${N}"; break; }
+  printf "\r\e[K  Waiting for %s to win the election... %d.%d s" "$STANDBY" $((el/1000)) $(( (el%1000)/100 ))
+  sleep 0.2
+done
+echo
+if [ -z "$T1" ]; then $D service scale -d "${STACK}_$LEADER=1" >/dev/null; exit 1; fi
+MTTR=$(( T1 - T0 ))
+printf "  ${G}${B}OK  %s IS NOW THE LEADER${N} (%s)\n" "$STANDBY" "$(ts)"
+
+term "MTTR (Mean Time To Recovery)" "Time from the failure until service is restored, averaged over several failures. Lower MTTR means higher availability."
+echo "$(date -Is) $LEADER->$STANDBY $MTTR" >> "$MTTR_LOG"
+RUNS=$(wc -l < "$MTTR_LOG")
+MEAN=$(awk '{s+=$3} END{if(NR) printf "%.2f", s/NR/1000}' "$MTTR_LOG")
+printf "  Recovery time this run : ${B}%.2f s${N}\n" "$(awk -v m=$MTTR 'BEGIN{print m/1000}')"
+printf "  MTTR over %d run(s)     : ${B}%s s${N}   (log: %s)\n" "$RUNS" "$MEAN" "$MTTR_LOG"
+
+# ---------------------------------------------------------------- STEP 5
+step 5 "Stream data AGAIN: the new leader ($STANDBY) must process it"
+term "Recovery" "Bringing the system back to a correct state and normal service after a failure."
+csv_row
+C_BEFORE=$(committed); stream; sleep "$STREAM_SECS"; C_AFTER=$(committed)
+read -r _ ABORTED PENDING <<< "$(db_counts)"
+if [ "$C_AFTER" != "?" ] && [ "$C_AFTER" -gt "$C_BEFORE" ] 2>/dev/null; then
+  echo "  COMMITTED: $C_BEFORE -> ${G}${B}$C_AFTER${N}  (+$((C_AFTER - C_BEFORE)) committed by $STANDBY)"
+else
+  echo "  ${Y}COMMITTED did not grow ($C_BEFORE -> $C_AFTER). Check that Edge forwards to both Core replicas.${N}"
+fi
+echo "  PENDING (in-doubt 2PC transactions): $PENDING   ABORTED: $ABORTED"
+
+# ---------------------------------------------------------------- STEP 6
+step 6 "Restore the crashed replica"
+$D service scale -d "${STACK}_$LEADER=1" >/dev/null 2>&1
+TR=$(now_ms)
+until is_up "$LP"; do printf "\r\e[K  Restarting %s... %d s" "$LEADER" $(( ($(now_ms)-TR)/1000 )); sleep 1; done; echo
+if is_leader "$LP"; then echo "  ${Y}$LEADER came back as LEADER (it won the next election).${N}"
+else echo "  ${G}$LEADER rejoined as STANDBY. One leader only, so no split brain.${N}"; fi
+echo "  Replication restored: 2 Core replicas again."
+
+# ---------------------------------------------------------------- STEP 7
+step 7 "Availability for this demo window"
+T_END=$(now_ms); TOTAL=$(( T_END - T_START )); UP=$(( TOTAL - MTTR ))
+term "Availability" "Fraction of time the system was able to serve requests: A = T_uptime / T_total."
+awk -v u=$UP -v t=$TOTAL -v m=$MTTR 'BEGIN{
+  printf "  T_total  = %.2f s\n  T_down   = %.2f s (no coordinator)\n  T_uptime = %.2f s\n", t/1000, m/1000, u/1000;
+  printf "  \033[1mAvailability = %.2f / %.2f = %.2f %%\033[0m\n", u/1000, t/1000, 100*u/t }'
+
+banner "SUMMARY"
+printf "  %-24s %s\n" "Fault injected" "Crash failure of $LEADER" \
+  "Detected after" "${DETECTED:-?} ms (health probe)" \
+  "Failover to" "$STANDBY" \
+  "Recovery time (run)" "$(awk -v m=$MTTR 'BEGIN{printf "%.2f s", m/1000}')" \
+  "MTTR ($RUNS runs)" "$MEAN s" \
+  "In-doubt (PENDING)" "$PENDING"
+term "Byzantine failure (analysed, not injected)" "A node that keeps running but sends WRONG or conflicting data. Tolerating f such nodes needs 3f+1 replicas; we have 2, so we rely on Edge input validation instead."

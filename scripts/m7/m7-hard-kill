@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# M7: FORCEFUL kill (SIGKILL) of the current leader, timed. Leader must be on this node (manager).
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+leader_now(){ if is_leader $C1_PORT; then echo core-1; elif is_leader $C2_PORT; then echo core-2; fi; }
+other(){ [ "$1" = core-1 ] && echo core-2 || echo core-1; }
+L=$(leader_now); [ -z "$L" ] && { echo "${R}No leader found.${N}"; exit 1; }
+S=$(other "$L"); SP=$(port_of "$S")
+banner "FORCEFUL KILL (SIGKILL) OF $L"
+term "SIGKILL" "Pulling the power plug: the process dies instantly with no cleanup, so it stops renewing its badge (lease) at once."
+CID=$($D ps -q -f name="${STACK}_${L}." | head -1)
+if [ -z "$CID" ]; then
+  echo "  ${Y}$L is not on this node, so it cannot be hard-killed from here.${N}"
+  echo "  ${Y}Run m7-polite-stop instead, or make core-1 the leader first (run m7-polite-stop once).${N}"; exit 1
+fi
+T0=$(now_ms)
+$D service scale -d "${STACK}_$L=0" >/dev/null 2>&1
+$D kill -s KILL "$CID" >/dev/null 2>&1
+printf "  ${R}${B}X  %s killed with SIGKILL at %s${N}\n" "$L" "$(ts)"
+until is_leader "$SP"; do printf "\r\e[K  waiting for %s to take the badge... %d.%d s" "$S" $(( ($(now_ms)-T0)/1000 )) $(( (($(now_ms)-T0)%1000)/100 )); sleep 0.2; done
+MS=$(( $(now_ms) - T0 ))
+printf "\r\e[K  ${G}${B}OK  %s is the new leader after %d.%02d s${N}\n" "$S" $((MS/1000)) $(( (MS%1000)/10 ))
+echo "  Expected for a hard kill: about 6.7 to 13.3 s (badge time left + standby's 3.3 s check)."
+echo "  Restore with: m7-restore"

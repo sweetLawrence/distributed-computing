@@ -1,0 +1,110 @@
+# Shared helpers for the M8 scripts. Sourced, not run.
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+INFRA="${INFRA:-/vagrant/infra}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+OUT="${OUT:-/vagrant/m8_results.csv}"
+C1_PORT=4001; C2_PORT=4002; EDGE_PORT=3001; PROM="http://$IP:9090"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+HERE="$(dirname "$(readlink -f "$0")")"
+
+say(){ printf "${C}[m8 %s]${N} %s\n" "$(date +%H:%M:%S)" "$*"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+S(){ echo "${STACK}_$1"; }
+upd(){ $D service update -d --quiet "$@" >/dev/null 2>&1 || say "${R}update failed: $*${N}"; }
+scale(){ $D service scale -d "$(S "$1")=$2" >/dev/null 2>&1; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+
+wait_converge(){
+  local t=0 pend
+  while :; do
+    pend=$($D service ls --filter name="${STACK}_" --format '{{.Replicas}}' \
+      | awk '{split($1,a,"/"); if (a[1]!=a[2]) n++} END{print n+0}')
+    [ "$pend" = 0 ] && return 0
+    t=$((t+2)); [ $t -ge 180 ] && { say "${Y}services still converging after 180 s, continuing${N}"; return 1; }
+    sleep 2
+  done
+}
+
+# Remove containers on THIS node that Swarm no longer tracks (the M7 zombie problem).
+clean_zombies(){
+  local s live c
+  for s in $($D service ls --filter name="${STACK}_" --format '{{.Name}}'); do
+    live=$($D service ps -q --no-trunc --filter desired-state=running "$s" 2>/dev/null | tr '\n' '|'); live=${live%|}
+    for c in $($D ps --format '{{.Names}}' --filter name="$s."); do
+      if [ -z "$live" ] || ! echo "$c" | grep -Eq "$live"; then
+        say "${Y}removing zombie container $c${N}"; $D rm -f "$c" >/dev/null
+      fi
+    done
+  done
+}
+
+wait_leader(){
+  local t=0
+  until is_leader $C1_PORT || is_leader $C2_PORT; do
+    t=$((t+1)); [ $t -ge 90 ] && { say "${R}no Core leader after 90 s${N}"; return 1; }
+    sleep 1
+  done
+  say "Core leader ready"
+}
+
+leader_name(){ if is_leader $C1_PORT; then echo core-1; elif is_leader $C2_PORT; then echo core-2; fi; }
+
+flush_ml_cache(){ # clear risk:* so every run pays the same ML cost (keeps core:leader)
+  local r; r=$($D ps -q -f name="$(S redis)" | head -1)
+  [ -n "$r" ] && $D exec "$r" sh -c "redis-cli --scan --pattern 'risk:*' | xargs -r redis-cli del" >/dev/null 2>&1
+}
+
+commits_cmd(){
+  local cid; cid=$($D ps -q -f name="$(S core-db)" | head -1)
+  echo "$D exec $cid psql -U core -d core -At -c \"SELECT count(*) FROM core_records WHERE status='COMMITTED'\""
+}
+
+footprint(){ # prints: <containers> <nodes> for the compute tier
+  $D service ps "$(S edge)" "$(S core-1)" "$(S core-2)" "$(S core-ml)" \
+     --filter desired-state=running --format '{{.Node}}' 2>/dev/null \
+  | awk 'NF{n++; u[$1]=1} END{k=0; for(x in u)k++; print n+0, k}'
+}
+
+# Refuse to measure on a broken cluster: all nodes Ready, nothing Pending, Edge sees Core (if needed).
+check_cluster(){ # usage: check_cluster [needs_core]
+  local down pend t ch
+  down=$($D node ls --format '{{.Hostname}} {{.Status}}' | awk '$2!="Ready"{print $1}' | tr '\n' ' ')
+  if [ -n "$down" ]; then
+    say "${R}${B}node(s) not Ready: $down${N}"
+    say "${R}Fix from your host: vagrant up <node>  (or vagrant reload <node>), then rerun.${N}"
+    return 1
+  fi
+  local missing=""
+  $D node inspect worker-1 --format '{{.Spec.Labels}}' 2>/dev/null | grep -q 'cloud-side:true' || missing="$missing worker-1:cloud-side=true"
+  $D node inspect worker-2 --format '{{.Spec.Labels}}' 2>/dev/null | grep -q 'worker2:true'     || missing="$missing worker-2:worker2=true"
+  if [ -n "$missing" ]; then
+    say "${R}${B}missing node labels:$missing${N}"
+    say "${R}Fix: sudo docker node update --label-add cloud-side=true worker-1 ; sudo docker node update --label-add worker2=true worker-2${N}"
+    return 1
+  fi
+  pend=$($D service ps $($D service ls -q --filter name="${STACK}_") --filter desired-state=running \
+           --format '{{.Name}} {{.CurrentState}} {{.Error}}' 2>/dev/null | grep -i pending)
+  if [ -n "$pend" ]; then
+    say "${R}${B}tasks stuck Pending:${N}"; echo "$pend" | sed 's/^/    /'
+    return 1
+  fi
+  if [ "${1:-}" = "needs_core" ]; then
+    t=0
+    until curl -s -m 2 "http://$IP:$EDGE_PORT/core-health" | grep -q '"reachable":true'; do
+      t=$((t+2)); [ $t -ge 60 ] && { say "${R}${B}Edge cannot reach any Core after 60 s${N}"; return 1; }
+      sleep 2
+    done
+    ch=$(curl -s -m 2 "http://$IP:$EDGE_PORT/core-health" | grep -o '"http://core-[12]:4000":{"reachable":[a-z]*' | sed 's/"http:\/\///; s/:4000":{"reachable"//')
+    say "Edge view of Core: $(echo $ch)"
+  fi
+  say "${G}cluster check passed: all nodes Ready, nothing Pending${N}"
+}
+
+smoke(){ # usage: smoke forward|local
+  say "smoke test: one real flagged reading through the pipeline (expect: $1)"
+  python3 "$HERE/m8-load" --model smoke --smoke "$1" --edge "http://$IP:$EDGE_PORT" --csv "$CSV"
+}
+
+nodes_ready(){ [ -z "$($D node ls --format '{{.Status}}' | grep -v Ready)" ]; }

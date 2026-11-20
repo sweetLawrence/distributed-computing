@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Print the M8 results as a comparison table.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m8-lib"
+[ -s "$OUT" ] || { echo "No results yet in $OUT"; exit 1; }
+python3 - "$OUT" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+cols = [("model",12),("scenario",16),("concurrency",4),("throughput_rps",9),("avg_ms",8),("p95_ms",8),
+        ("success_pct",8),("backhaul_pct",8),("commits",7),("outage_s",7),("avg_cpu_cores_pct",7),
+        ("peak_mem_mb",8),("containers",5),("nodes",5)]
+hdr = ["model","scenario","clnt","req/s","avg ms","p95 ms","ok %","bkhl %","commit","outage","cpu %","mem MB","ctrs","nodes"]
+print("  ".join(h.ljust(w) for h,(c,w) in zip(hdr,cols)))
+print("-" * (sum(w for _,w in cols) + 2*len(cols)))
+for r in rows:
+    print("  ".join(str(r.get(c,"")).ljust(w)[:w] for c,w in cols))
+PY
+echo
+echo "Full data: $OUT"

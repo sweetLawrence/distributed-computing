@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""ICS 2403 M8 load generator.
+Sends REAL rows from the smartwear CSV to Edge /ingest with N parallel clients for a fixed
+duration, then pulls CPU/memory for the run window from Prometheus (cAdvisor) and appends
+one result row to the results CSV."""
+import argparse, csv, json, os, subprocess, sys, threading, time, urllib.parse, urllib.request
+from datetime import datetime
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--model", required=True)
+ap.add_argument("--scenario", default="normal")
+ap.add_argument("--conc", type=int, default=1)
+ap.add_argument("--duration", type=int, default=30)
+ap.add_argument("--edge", default="http://192.168.56.11:3001")
+ap.add_argument("--csv", default="/vagrant/data/smartwear_health_monitoring_dataset.csv")
+ap.add_argument("--prom", default="http://192.168.56.11:9090")
+ap.add_argument("--stack", default="theme5")
+ap.add_argument("--out", default="/vagrant/m8_results.csv")
+ap.add_argument("--settle", type=int, default=15, help="seconds to wait for the last Prometheus scrape")
+ap.add_argument("--commits-cmd", default="")
+ap.add_argument("--extra", action="append", default=[])
+ap.add_argument("--smoke", choices=["forward", "local"], help="send ONE real flagged row and verify the path, then exit")
+a = ap.parse_args()
+
+def num(v):
+    v = v.strip()
+    try: return int(v)
+    except ValueError:
+        try: return float(v)
+        except ValueError: return v
+
+with open(a.csv, newline="") as f:
+    rows = [{k.strip(): num(v) for k, v in r.items() if k} for r in csv.DictReader(f)]
+if not rows: sys.exit("dataset is empty")
+
+if a.smoke:
+    def flagged(r):
+        try: return float(r.get("heart_rate", 0)) > 120 or float(r.get("systolic_bp", 0)) > 160 or float(r.get("respiratory_rate", 0)) > 25
+        except (TypeError, ValueError): return False
+    row = next((r for r in rows if flagged(r)), None)
+    if not row: sys.exit("no flagged row found in dataset")
+    body = json.dumps({"row": row, "t_sent": int(time.time() * 1000), "lamport": 1}).encode()
+    req = urllib.request.Request(a.edge.rstrip("/") + "/ingest", data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r: resp = json.loads(r.read())
+    except Exception as e:
+        print(f"  SMOKE FAIL: edge request failed: {e}"); sys.exit(1)
+    route = resp.get("status"); core = resp.get("core_response") or {}
+    txn = (core.get("txn") or {}).get("outcome"); risk = core.get("risk_probability")
+    print(f"  smoke row: patient_id={row.get('patient_id')} heart_rate={row.get('heart_rate')} systolic_bp={row.get('systolic_bp')} respiratory_rate={row.get('respiratory_rate')}")
+    print(f"  smoke result: route={route} risk={risk} txn={txn} via={core.get('replica')}")
+    if a.smoke == "local":
+        ok = route == "handled-locally"
+    else:
+        ok = route == "forwarded" and risk is not None and txn == "COMMIT"
+    if not ok:
+        why = ("expected handled-locally" if a.smoke == "local" else
+               "Core did not reply" if route != "forwarded" else
+               "ML returned no risk score (core-ml down?)" if risk is None else
+               f"2PC outcome {txn} (cloud-db or core-db unreachable?)")
+        print(f"  SMOKE FAIL: {why}"); sys.exit(1)
+    print("  SMOKE PASS"); sys.exit(0)
+
+def commits():
+    if not a.commits_cmd: return None
+    try: return int(subprocess.run(a.commits_cmd, shell=True, capture_output=True, text=True, timeout=20).stdout.strip())
+    except Exception: return None
+
+lock = threading.Lock()
+results = []          # (t_rel_s, ok, latency_ms, route)
+counter = [0]; lam = [0]
+stop = threading.Event()
+url = a.edge.rstrip("/") + "/ingest"
+T0 = time.time()
+
+def worker():
+    while not stop.is_set():
+        with lock:
+            row = rows[counter[0] % len(rows)]; counter[0] += 1; lam[0] += 1; l = lam[0]
+        body = json.dumps({"row": row, "t_sent": int(time.time() * 1000), "lamport": l}).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        t = time.time(); ok = False; route = "error"
+        try:
+            with urllib.request.urlopen(req, timeout=6) as r:
+                route = json.loads(r.read() or b"{}").get("status", "?"); ok = True
+        except Exception:
+            time.sleep(0.05)  # avoid hot-looping while a service is down
+        lat = (time.time() - t) * 1000
+        with lock: results.append((t - T0, ok, lat, route))
+
+c_before = commits()
+threads = [threading.Thread(target=worker, daemon=True) for _ in range(a.conc)]
+for th in threads: th.start()
+while time.time() - T0 < a.duration:
+    time.sleep(1)
+    with lock: n = len(results); e = sum(1 for x in results if not x[1])
+    sys.stderr.write(f"\r  {int(time.time()-T0):3d}s  sent={n}  errors={e}   "); sys.stderr.flush()
+stop.set()
+for th in threads: th.join(timeout=8)
+elapsed = time.time() - T0
+sys.stderr.write("\n")
+
+oks = sorted(x[2] for x in results if x[1])
+errs = [x for x in results if not x[1]]
+def pct(p): return round(oks[min(len(oks) - 1, int(len(oks) * p))], 1) if oks else ""
+local = sum(1 for x in results if x[3] == "handled-locally")
+fwd = sum(1 for x in results if x[3] == "forwarded")
+# outage = longest unbroken stretch of failed requests (scattered single errors do not count as an outage)
+outage, start = 0.0, None
+for t, ok, _, _ in sorted(results):
+    if not ok:
+        start = t if start is None else start
+        outage = max(outage, t - start)
+    else:
+        start = None
+outage = round(outage, 1)
+
+# ---- resource utilisation from Prometheus / cAdvisor over the run window
+sys.stderr.write(f"  waiting {a.settle}s for the final Prometheus scrape...\n")
+time.sleep(a.settle)
+win = int(elapsed + a.settle)
+sel = f'container_label_com_docker_swarm_service_name=~"{a.stack}_(edge|core-1|core-2|core-ml)"'
+def prom(q):
+    try:
+        u = a.prom.rstrip("/") + "/api/v1/query?" + urllib.parse.urlencode({"query": q})
+        with urllib.request.urlopen(u, timeout=10) as r:
+            res = json.loads(r.read())["data"]["result"]
+        return round(sum(float(x["value"][1]) for x in res), 2) if res else ""
+    except Exception:
+        return ""
+cpu_s = prom(f"sum(increase(container_cpu_usage_seconds_total{{{sel}}}[{win}s]))")
+mem_b = prom(f"sum(max_over_time(container_memory_usage_bytes{{{sel}}}[{win}s]))")
+mem_mb = round(mem_b / 1048576, 1) if mem_b != "" else ""
+cpu_pct = round(100 * cpu_s / win, 1) if cpu_s != "" else ""
+
+c_after = commits()
+total = len(results)
+rec = {
+    "timestamp": datetime.now().isoformat(timespec="seconds"),
+    "model": a.model, "scenario": a.scenario, "concurrency": a.conc,
+    "duration_s": round(elapsed, 1), "requests": total, "ok": len(oks), "errors": len(errs),
+    "success_pct": round(100 * len(oks) / total, 2) if total else "",
+    "throughput_rps": round(len(oks) / elapsed, 2) if elapsed else "",
+    "avg_ms": round(sum(oks) / len(oks), 1) if oks else "",
+    "p50_ms": pct(0.50), "p95_ms": pct(0.95), "p99_ms": pct(0.99),
+    "handled_locally": local, "forwarded": fwd,
+    "backhaul_pct": round(100 * fwd / total, 1) if total else "",
+    "commits": (c_after - c_before) if (c_before is not None and c_after is not None) else "",
+    "outage_s": outage,
+    "cpu_seconds": cpu_s, "avg_cpu_cores_pct": cpu_pct, "peak_mem_mb": mem_mb,
+}
+for kv in a.extra:
+    k, _, v = kv.partition("="); rec[k] = v
+
+new = not os.path.exists(a.out) or os.path.getsize(a.out) == 0
+with open(a.out, "a", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(rec.keys()))
+    if new: w.writeheader()
+    w.writerow(rec)
+
+G, Y, B, N = "\033[32m", "\033[33m", "\033[1m", "\033[0m"
+print(f"  {B}{a.model} | {a.scenario} | {a.conc} clients{N}")
+print(f"    requests {total}  ok {len(oks)}  errors {len(errs)}  success {rec['success_pct']}%")
+print(f"    throughput {G}{rec['throughput_rps']} req/s{N}   latency avg {rec['avg_ms']} ms  p95 {rec['p95_ms']} ms  p99 {rec['p99_ms']} ms")
+print(f"    local {local}  forwarded {fwd}  backhaul {rec['backhaul_pct']}%   commits {rec['commits']}")
+print(f"    CPU {cpu_s if cpu_s != '' else 'n/a'} cpu-s ({cpu_pct if cpu_pct != '' else 'n/a'}% of one core)   peak mem {mem_mb if mem_mb != '' else 'n/a'} MB")
+if outage > 0: print(f"    {Y}observed outage window ~{outage}s{N}")
+if cpu_s == "": print(f"    {Y}(no cAdvisor data from Prometheus; resource columns left blank){N}")

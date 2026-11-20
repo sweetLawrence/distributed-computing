@@ -1,0 +1,374 @@
+
+[36m[1m================ MILESTONE 7: FAULT TOLERANCE AND RECOVERY ================[0m
+
+[35m[1m[ICS 2403 TERM] Fault Modeling[0m
+[35m  Deciding in advance WHICH failures the system must survive and HOW they behave. Our model: a Core replica can crash (fail-stop). The other replica, Redis and both databases stay up.[0m
+
+[1m[33m[STEP 1] Pre-flight: find the active leader[0m  (08:14:20)
+  Leader (coordinator): [32m[1mcore-2[0m  on :4002
+  Standby (replica)   : [36m[1mcore-1[0m on :4001
+  [33mNOTE: core-2 is the leader this time. In Terminal 2 run: m7-watch-core2 core-1[0m
+
+[35m[1m[ICS 2403 TERM] Replication[0m
+[35m  Running more than one copy of a component so a copy can take over when one fails. Here: 2 Core replicas, one leader and one standby.[0m
+
+[1m[33m[STEP 2] Normal operation: stream real data through core-2[0m  (08:14:21)
+[32m  Real record: line 42565 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     42564
+    age                            83
+    gender                         Female
+    bmi                            23.4
+    smoking_status                 Current
+    alcohol_consumption            High
+    heart_rate                     101
+    systolic_bp                    141
+    diastolic_bp                   101
+    respiratory_rate               19
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED in core-db: 10590 -> [32m10596[0m  (processed by core-2)
+
+[1m[33m[STEP 3] INJECT FAULT: crash the leader (core-2)[0m  (08:14:29)
+
+[35m[1m[ICS 2403 TERM] Crash Failure[0m
+[35m  A process stops suddenly and does nothing afterwards: no reply, no goodbye, no cleanup. We simulate it by killing the leader's container.[0m
+  [31m[1mX  core-2 KILLED at 08:14:29[0m  via Swarm stop on node worker-1 (container not on this node)
+
+[1m[33m[STEP 4] Failure detection and failover[0m  (08:14:29)
+
+[35m[1m[ICS 2403 TERM] Failure Detection[0m
+[35m  Noticing that a component has failed. A crashed process cannot announce its own death, so others use timeouts: the leader lock in Redis has a 10 s TTL and expires when no heartbeat renews it.[0m
+
+[35m[1m[ICS 2403 TERM] Failover[0m
+[35m  Automatically switching work from the failed component to a healthy replica.[0m
+[K  Waiting for core-1 to win the election... 0.0 s[K  Waiting for core-1 to win the election... 0.3 s[K  Waiting for core-1 to win the election... 0.5 s[K  Waiting for core-1 to win the election... 0.7 s[K  Waiting for core-1 to win the election... 1.0 s[K  Waiting for core-1 to win the election... 1.2 s[K  [33mHealth probe to core-2 failed after 1509 ms: failure detected[0m
+[K  Waiting for core-1 to win the election... 1.5 s[K  Waiting for core-1 to win the election... 1.7 s[K  Waiting for core-1 to win the election... 1.9 s[K  Waiting for core-1 to win the election... 2.2 s[K  Waiting for core-1 to win the election... 2.4 s[K  Waiting for core-1 to win the election... 2.6 s[K  Waiting for core-1 to win the election... 2.9 s[K  Waiting for core-1 to win the election... 3.1 s[K  Waiting for core-1 to win the election... 3.4 s[K  Waiting for core-1 to win the election... 3.6 s[K  Waiting for core-1 to win the election... 3.8 s[K  Waiting for core-1 to win the election... 4.1 s[K  Waiting for core-1 to win the election... 4.3 s[K  Waiting for core-1 to win the election... 4.6 s[K  Waiting for core-1 to win the election... 4.8 s[K  Waiting for core-1 to win the election... 5.0 s[K  Waiting for core-1 to win the election... 5.3 s[K  Waiting for core-1 to win the election... 5.5 s[K  Waiting for core-1 to win the election... 5.7 s[K  Waiting for core-1 to win the election... 5.9 s[K  Waiting for core-1 to win the election... 6.2 s[K  Waiting for core-1 to win the election... 6.4 s[K  Waiting for core-1 to win the election... 6.6 s[K  Waiting for core-1 to win the election... 6.9 s[K  Waiting for core-1 to win the election... 7.1 s[K  Waiting for core-1 to win the election... 7.3 s[K  Waiting for core-1 to win the election... 7.6 s[K  Waiting for core-1 to win the election... 7.8 s[K  Waiting for core-1 to win the election... 8.1 s[K  Waiting for core-1 to win the election... 8.3 s[K  Waiting for core-1 to win the election... 8.5 s[K  Waiting for core-1 to win the election... 8.8 s[K  Waiting for core-1 to win the election... 9.0 s[K  Waiting for core-1 to win the election... 9.2 s[K  Waiting for core-1 to win the election... 9.5 s[K  Waiting for core-1 to win the election... 9.7 s[K  Waiting for core-1 to win the election... 9.9 s[K  Waiting for core-1 to win the election... 10.2 s[K  Waiting for core-1 to win the election... 10.4 s[K  Waiting for core-1 to win the election... 10.6 s[K  Waiting for core-1 to win the election... 10.9 s[K  Waiting for core-1 to win the election... 11.1 s[K  Waiting for core-1 to win the election... 11.3 s[K  Waiting for core-1 to win the election... 11.5 s[K  Waiting for core-1 to win the election... 11.7 s[K  Waiting for core-1 to win the election... 12.0 s[K  Waiting for core-1 to win the election... 12.2 s[K  Waiting for core-1 to win the election... 12.4 s[K  Waiting for core-1 to win the election... 12.6 s[K  Waiting for core-1 to win the election... 12.8 s[K  Waiting for core-1 to win the election... 13.0 s[K  Waiting for core-1 to win the election... 13.3 s[K  Waiting for core-1 to win the election... 13.5 s[K  Waiting for core-1 to win the election... 13.7 s[K  Waiting for core-1 to win the election... 13.9 s[K  Waiting for core-1 to win the election... 14.2 s[K  Waiting for core-1 to win the election... 14.4 s[K  Waiting for core-1 to win the election... 14.7 s[K  Waiting for core-1 to win the election... 14.9 s[K  Waiting for core-1 to win the election... 15.2 s[K  Waiting for core-1 to win the election... 15.4 s[K  Waiting for core-1 to win the election... 15.6 s[K  Waiting for core-1 to win the election... 15.9 s[K  Waiting for core-1 to win the election... 16.1 s[K  Waiting for core-1 to win the election... 16.3 s[K  Waiting for core-1 to win the election... 16.6 s[K  Waiting for core-1 to win the election... 16.8 s[K  Waiting for core-1 to win the election... 17.1 s[K  Waiting for core-1 to win the election... 17.3 s[K  Waiting for core-1 to win the election... 17.5 s[K  Waiting for core-1 to win the election... 17.8 s[K  Waiting for core-1 to win the election... 18.0 s[K  Waiting for core-1 to win the election... 18.3 s[K  Waiting for core-1 to win the election... 18.5 s[K  Waiting for core-1 to win the election... 18.7 s[K  Waiting for core-1 to win the election... 19.0 s[K  Waiting for core-1 to win the election... 19.2 s[K  Waiting for core-1 to win the election... 19.5 s[K  Waiting for core-1 to win the election... 19.7 s[K  Waiting for core-1 to win the election... 20.0 s[K  Waiting for core-1 to win the election... 20.2 s[K  Waiting for core-1 to win the election... 20.4 s[K  Waiting for core-1 to win the election... 20.6 s[K  Waiting for core-1 to win the election... 20.8 s[K  Waiting for core-1 to win the election... 21.1 s[K  Waiting for core-1 to win the election... 21.3 s[K  Waiting for core-1 to win the election... 21.5 s[K  Waiting for core-1 to win the election... 21.7 s
+  [32m[1mOK  core-1 IS NOW THE LEADER[0m (08:14:51)
+
+[35m[1m[ICS 2403 TERM] MTTR (Mean Time To Recovery)[0m
+[35m  Time from the failure until service is restored, averaged over several failures. Lower MTTR means higher availability.[0m
+  Recovery time this run : [1m21.98 s[0m
+  MTTR over 1 run(s)     : [1m21.98 s[0m   (log: /vagrant/m7_mttr_runs.log)
+
+[1m[33m[STEP 5] Stream data AGAIN: the new leader (core-1) must process it[0m  (08:14:51)
+
+[35m[1m[ICS 2403 TERM] Recovery[0m
+[35m  Bringing the system back to a correct state and normal service after a failure.[0m
+[32m  Real record: line 111027 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     111026
+    age                            62
+    gender                         Male
+    bmi                            29.5
+    smoking_status                 Former
+    alcohol_consumption            Moderate
+    heart_rate                     96
+    systolic_bp                    108
+    diastolic_bp                   88
+    respiratory_rate               16
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED: 10601 -> [32m[1m10604[0m  (+3 committed by core-1)
+  PENDING (in-doubt 2PC transactions): 1   ABORTED: 0
+
+[1m[33m[STEP 6] Restore the crashed replica[0m  (08:15:00)
+[K  Restarting core-2... 0 s[K  Restarting core-2... 1 s[K  Restarting core-2... 2 s[K  Restarting core-2... 3 s[K  Restarting core-2... 4 s[K  Restarting core-2... 5 s[K  Restarting core-2... 6 s
+  [32mcore-2 rejoined as STANDBY. One leader only, so no split brain.[0m
+  Replication restored: 2 Core replicas again.
+
+[1m[33m[STEP 7] Availability for this demo window[0m  (08:15:07)
+
+[35m[1m[ICS 2403 TERM] Availability[0m
+[35m  Fraction of time the system was able to serve requests: A = T_uptime / T_total.[0m
+  T_total  = 46.64 s
+  T_down   = 21.98 s (no coordinator)
+  T_uptime = 24.66 s
+  [1mAvailability = 24.66 / 46.64 = 52.88 %[0m
+
+[36m[1m================ SUMMARY ================[0m
+  Fault injected           Crash failure of core-2
+  Detected after           1509 ms (health probe)
+  Failover to              core-1
+  Recovery time (run)      21.98 s
+  MTTR (1 runs)            21.98 s
+  In-doubt (PENDING)       1
+
+[35m[1m[ICS 2403 TERM] Byzantine failure (analysed, not injected)[0m
+[35m  A node that keeps running but sends WRONG or conflicting data. Tolerating f such nodes needs 3f+1 replicas; we have 2, so we rely on Edge input validation instead.[0m
+
+[36m[1m================ MILESTONE 7: FAULT TOLERANCE AND RECOVERY ================[0m
+
+[35m[1m[ICS 2403 TERM] Fault Modeling[0m
+[35m  Deciding in advance WHICH failures the system must survive and HOW they behave. Our model: a Core replica can crash (fail-stop). The other replica, Redis and both databases stay up.[0m
+
+[1m[33m[STEP 1] Pre-flight: find the active leader[0m  (08:15:37)
+  Leader (coordinator): [32m[1mcore-1[0m  on :4001
+  Standby (replica)   : [36m[1mcore-2[0m on :4002
+
+[35m[1m[ICS 2403 TERM] Replication[0m
+[35m  Running more than one copy of a component so a copy can take over when one fails. Here: 2 Core replicas, one leader and one standby.[0m
+
+[1m[33m[STEP 2] Normal operation: stream real data through core-1[0m  (08:15:37)
+[32m  Real record: line 112576 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     112575
+    age                            59
+    gender                         Female
+    bmi                            27.8
+    smoking_status                 Former
+    alcohol_consumption            None
+    heart_rate                     108
+    systolic_bp                    112
+    diastolic_bp                   92
+    respiratory_rate               19
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED in core-db: 10610 -> [32m10616[0m  (processed by core-1)
+
+[1m[33m[STEP 3] INJECT FAULT: crash the leader (core-1)[0m  (08:15:46)
+
+[35m[1m[ICS 2403 TERM] Crash Failure[0m
+[35m  A process stops suddenly and does nothing afterwards: no reply, no goodbye, no cleanup. We simulate it by killing the leader's container.[0m
+  [31m[1mX  core-1 KILLED at 08:15:47[0m  via SIGKILL on manager (hard crash, no cleanup)
+
+[1m[33m[STEP 4] Failure detection and failover[0m  (08:15:47)
+
+[35m[1m[ICS 2403 TERM] Failure Detection[0m
+[35m  Noticing that a component has failed. A crashed process cannot announce its own death, so others use timeouts: the leader lock in Redis has a 10 s TTL and expires when no heartbeat renews it.[0m
+
+[35m[1m[ICS 2403 TERM] Failover[0m
+[35m  Automatically switching work from the failed component to a healthy replica.[0m
+[K  [33mHealth probe to core-1 failed after 727 ms: failure detected[0m
+[K  Waiting for core-2 to win the election... 0.7 s[K  Waiting for core-2 to win the election... 0.9 s[K  Waiting for core-2 to win the election... 1.1 s[K  Waiting for core-2 to win the election... 1.4 s[K  Waiting for core-2 to win the election... 1.6 s[K  Waiting for core-2 to win the election... 1.8 s[K  Waiting for core-2 to win the election... 2.1 s[K  Waiting for core-2 to win the election... 2.3 s[K  Waiting for core-2 to win the election... 2.6 s[K  Waiting for core-2 to win the election... 2.8 s[K  Waiting for core-2 to win the election... 3.1 s[K  Waiting for core-2 to win the election... 3.3 s[K  Waiting for core-2 to win the election... 3.5 s[K  Waiting for core-2 to win the election... 3.8 s[K  Waiting for core-2 to win the election... 4.0 s[K  Waiting for core-2 to win the election... 4.2 s[K  Waiting for core-2 to win the election... 4.4 s[K  Waiting for core-2 to win the election... 4.7 s[K  Waiting for core-2 to win the election... 4.9 s[K  Waiting for core-2 to win the election... 5.2 s[K  Waiting for core-2 to win the election... 5.4 s[K  Waiting for core-2 to win the election... 5.6 s[K  Waiting for core-2 to win the election... 5.9 s[K  Waiting for core-2 to win the election... 6.1 s[K  Waiting for core-2 to win the election... 6.4 s[K  Waiting for core-2 to win the election... 6.6 s[K  Waiting for core-2 to win the election... 6.8 s[K  Waiting for core-2 to win the election... 7.1 s[K  Waiting for core-2 to win the election... 7.3 s[K  Waiting for core-2 to win the election... 7.6 s[K  Waiting for core-2 to win the election... 7.8 s[K  Waiting for core-2 to win the election... 8.1 s[K  Waiting for core-2 to win the election... 8.3 s[K  Waiting for core-2 to win the election... 8.6 s[K  Waiting for core-2 to win the election... 8.8 s[K  Waiting for core-2 to win the election... 9.1 s[K  Waiting for core-2 to win the election... 9.3 s[K  Waiting for core-2 to win the election... 9.6 s[K  Waiting for core-2 to win the election... 9.8 s[K  Waiting for core-2 to win the election... 10.1 s[K  Waiting for core-2 to win the election... 10.3 s[K  Waiting for core-2 to win the election... 10.6 s[K  Waiting for core-2 to win the election... 10.8 s[K  Waiting for core-2 to win the election... 11.0 s
+  [32m[1mOK  core-2 IS NOW THE LEADER[0m (08:15:57)
+
+[35m[1m[ICS 2403 TERM] MTTR (Mean Time To Recovery)[0m
+[35m  Time from the failure until service is restored, averaged over several failures. Lower MTTR means higher availability.[0m
+  Recovery time this run : [1m11.30 s[0m
+  MTTR over 2 run(s)     : [1m16.64 s[0m   (log: /vagrant/m7_mttr_runs.log)
+
+[1m[33m[STEP 5] Stream data AGAIN: the new leader (core-2) must process it[0m  (08:15:57)
+
+[35m[1m[ICS 2403 TERM] Recovery[0m
+[35m  Bringing the system back to a correct state and normal service after a failure.[0m
+[32m  Real record: line 34761 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     34760
+    age                            83
+    gender                         Male
+    bmi                            29.0
+    smoking_status                 Former
+    alcohol_consumption            None
+    heart_rate                     103
+    systolic_bp                    134
+    diastolic_bp                   100
+    respiratory_rate               14
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED: 10616 -> [32m[1m10619[0m  (+3 committed by core-2)
+  PENDING (in-doubt 2PC transactions): 1   ABORTED: 0
+
+[1m[33m[STEP 6] Restore the crashed replica[0m  (08:16:06)
+[K  Restarting core-1... 0 s[K  Restarting core-1... 1 s[K  Restarting core-1... 2 s[K  Restarting core-1... 3 s[K  Restarting core-1... 4 s[K  Restarting core-1... 5 s
+  [32mcore-1 rejoined as STANDBY. One leader only, so no split brain.[0m
+  Replication restored: 2 Core replicas again.
+
+[1m[33m[STEP 7] Availability for this demo window[0m  (08:16:12)
+
+[35m[1m[ICS 2403 TERM] Availability[0m
+[35m  Fraction of time the system was able to serve requests: A = T_uptime / T_total.[0m
+  T_total  = 34.87 s
+  T_down   = 11.30 s (no coordinator)
+  T_uptime = 23.57 s
+  [1mAvailability = 23.57 / 34.87 = 67.60 %[0m
+
+[36m[1m================ SUMMARY ================[0m
+  Fault injected           Crash failure of core-1
+  Detected after           727 ms (health probe)
+  Failover to              core-2
+  Recovery time (run)      11.30 s
+  MTTR (2 runs)            16.64 s
+  In-doubt (PENDING)       1
+
+[35m[1m[ICS 2403 TERM] Byzantine failure (analysed, not injected)[0m
+[35m  A node that keeps running but sends WRONG or conflicting data. Tolerating f such nodes needs 3f+1 replicas; we have 2, so we rely on Edge input validation instead.[0m
+
+[36m[1m================ MILESTONE 7: FAULT TOLERANCE AND RECOVERY ================[0m
+
+[35m[1m[ICS 2403 TERM] Fault Modeling[0m
+[35m  Deciding in advance WHICH failures the system must survive and HOW they behave. Our model: a Core replica can crash (fail-stop). The other replica, Redis and both databases stay up.[0m
+
+[1m[33m[STEP 1] Pre-flight: find the active leader[0m  (08:16:42)
+  Leader (coordinator): [32m[1mcore-2[0m  on :4002
+  Standby (replica)   : [36m[1mcore-1[0m on :4001
+  [33mNOTE: core-2 is the leader this time. In Terminal 2 run: m7-watch-core2 core-1[0m
+
+[35m[1m[ICS 2403 TERM] Replication[0m
+[35m  Running more than one copy of a component so a copy can take over when one fails. Here: 2 Core replicas, one leader and one standby.[0m
+
+[1m[33m[STEP 2] Normal operation: stream real data through core-2[0m  (08:16:43)
+[32m  Real record: line 110494 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     110493
+    age                            86
+    gender                         Male
+    bmi                            30.0
+    smoking_status                 Never
+    alcohol_consumption            None
+    heart_rate                     63
+    systolic_bp                    157
+    diastolic_bp                   85
+    respiratory_rate               22
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED in core-db: 10631 -> [32m10637[0m  (processed by core-2)
+
+[1m[33m[STEP 3] INJECT FAULT: crash the leader (core-2)[0m  (08:16:51)
+
+[35m[1m[ICS 2403 TERM] Crash Failure[0m
+[35m  A process stops suddenly and does nothing afterwards: no reply, no goodbye, no cleanup. We simulate it by killing the leader's container.[0m
+  [31m[1mX  core-2 KILLED at 08:16:52[0m  via Swarm stop on node worker-1 (container not on this node)
+
+[1m[33m[STEP 4] Failure detection and failover[0m  (08:16:52)
+
+[35m[1m[ICS 2403 TERM] Failure Detection[0m
+[35m  Noticing that a component has failed. A crashed process cannot announce its own death, so others use timeouts: the leader lock in Redis has a 10 s TTL and expires when no heartbeat renews it.[0m
+
+[35m[1m[ICS 2403 TERM] Failover[0m
+[35m  Automatically switching work from the failed component to a healthy replica.[0m
+[K  Waiting for core-1 to win the election... 0.0 s[K  Waiting for core-1 to win the election... 0.3 s[K  Waiting for core-1 to win the election... 0.5 s[K  Waiting for core-1 to win the election... 0.7 s[K  Waiting for core-1 to win the election... 1.0 s[K  [33mHealth probe to core-2 failed after 1288 ms: failure detected[0m
+[K  Waiting for core-1 to win the election... 1.2 s[K  Waiting for core-1 to win the election... 1.5 s[K  Waiting for core-1 to win the election... 1.7 s[K  Waiting for core-1 to win the election... 2.0 s[K  Waiting for core-1 to win the election... 2.2 s[K  Waiting for core-1 to win the election... 2.4 s[K  Waiting for core-1 to win the election... 2.7 s[K  Waiting for core-1 to win the election... 2.9 s[K  Waiting for core-1 to win the election... 3.1 s[K  Waiting for core-1 to win the election... 3.4 s[K  Waiting for core-1 to win the election... 3.6 s[K  Waiting for core-1 to win the election... 3.8 s[K  Waiting for core-1 to win the election... 4.0 s[K  Waiting for core-1 to win the election... 4.2 s[K  Waiting for core-1 to win the election... 4.4 s[K  Waiting for core-1 to win the election... 4.7 s[K  Waiting for core-1 to win the election... 4.9 s[K  Waiting for core-1 to win the election... 5.1 s[K  Waiting for core-1 to win the election... 5.3 s[K  Waiting for core-1 to win the election... 5.5 s[K  Waiting for core-1 to win the election... 5.7 s[K  Waiting for core-1 to win the election... 5.9 s[K  Waiting for core-1 to win the election... 6.2 s[K  Waiting for core-1 to win the election... 6.4 s[K  Waiting for core-1 to win the election... 6.6 s[K  Waiting for core-1 to win the election... 6.8 s[K  Waiting for core-1 to win the election... 7.0 s[K  Waiting for core-1 to win the election... 7.3 s[K  Waiting for core-1 to win the election... 7.5 s[K  Waiting for core-1 to win the election... 7.7 s[K  Waiting for core-1 to win the election... 7.9 s[K  Waiting for core-1 to win the election... 8.1 s[K  Waiting for core-1 to win the election... 8.3 s[K  Waiting for core-1 to win the election... 8.6 s[K  Waiting for core-1 to win the election... 8.8 s[K  Waiting for core-1 to win the election... 9.0 s[K  Waiting for core-1 to win the election... 9.2 s[K  Waiting for core-1 to win the election... 9.4 s[K  Waiting for core-1 to win the election... 9.6 s[K  Waiting for core-1 to win the election... 9.9 s[K  Waiting for core-1 to win the election... 10.1 s[K  Waiting for core-1 to win the election... 10.3 s[K  Waiting for core-1 to win the election... 10.5 s[K  Waiting for core-1 to win the election... 10.7 s[K  Waiting for core-1 to win the election... 10.9 s[K  Waiting for core-1 to win the election... 11.2 s[K  Waiting for core-1 to win the election... 11.4 s[K  Waiting for core-1 to win the election... 11.6 s[K  Waiting for core-1 to win the election... 11.8 s[K  Waiting for core-1 to win the election... 12.0 s[K  Waiting for core-1 to win the election... 12.3 s[K  Waiting for core-1 to win the election... 12.5 s[K  Waiting for core-1 to win the election... 12.7 s[K  Waiting for core-1 to win the election... 13.1 s[K  Waiting for core-1 to win the election... 13.5 s[K  Waiting for core-1 to win the election... 13.8 s[K  Waiting for core-1 to win the election... 14.0 s[K  Waiting for core-1 to win the election... 14.3 s[K  Waiting for core-1 to win the election... 14.5 s[K  Waiting for core-1 to win the election... 14.7 s[K  Waiting for core-1 to win the election... 14.9 s[K  Waiting for core-1 to win the election... 15.2 s[K  Waiting for core-1 to win the election... 15.4 s[K  Waiting for core-1 to win the election... 15.7 s[K  Waiting for core-1 to win the election... 15.9 s[K  Waiting for core-1 to win the election... 16.1 s[K  Waiting for core-1 to win the election... 16.3 s[K  Waiting for core-1 to win the election... 16.6 s[K  Waiting for core-1 to win the election... 16.8 s[K  Waiting for core-1 to win the election... 17.0 s[K  Waiting for core-1 to win the election... 17.3 s[K  Waiting for core-1 to win the election... 17.5 s[K  Waiting for core-1 to win the election... 17.7 s[K  Waiting for core-1 to win the election... 18.0 s[K  Waiting for core-1 to win the election... 18.2 s[K  Waiting for core-1 to win the election... 18.5 s[K  Waiting for core-1 to win the election... 18.7 s[K  Waiting for core-1 to win the election... 18.9 s[K  Waiting for core-1 to win the election... 19.1 s[K  Waiting for core-1 to win the election... 19.4 s[K  Waiting for core-1 to win the election... 19.6 s[K  Waiting for core-1 to win the election... 19.9 s[K  Waiting for core-1 to win the election... 20.1 s[K  Waiting for core-1 to win the election... 20.4 s[K  Waiting for core-1 to win the election... 20.6 s[K  Waiting for core-1 to win the election... 20.8 s[K  Waiting for core-1 to win the election... 21.0 s[K  Waiting for core-1 to win the election... 21.3 s[K  Waiting for core-1 to win the election... 21.5 s[K  Waiting for core-1 to win the election... 21.8 s[K  Waiting for core-1 to win the election... 22.0 s[K  Waiting for core-1 to win the election... 22.2 s[K  Waiting for core-1 to win the election... 22.5 s[K  Waiting for core-1 to win the election... 22.7 s[K  Waiting for core-1 to win the election... 22.9 s[K  Waiting for core-1 to win the election... 23.2 s[K  Waiting for core-1 to win the election... 23.4 s[K  Waiting for core-1 to win the election... 23.6 s
+  [32m[1mOK  core-1 IS NOW THE LEADER[0m (08:17:16)
+
+[35m[1m[ICS 2403 TERM] MTTR (Mean Time To Recovery)[0m
+[35m  Time from the failure until service is restored, averaged over several failures. Lower MTTR means higher availability.[0m
+  Recovery time this run : [1m23.91 s[0m
+  MTTR over 3 run(s)     : [1m19.06 s[0m   (log: /vagrant/m7_mttr_runs.log)
+
+[1m[33m[STEP 5] Stream data AGAIN: the new leader (core-1) must process it[0m  (08:17:16)
+
+[35m[1m[ICS 2403 TERM] Recovery[0m
+[35m  Bringing the system back to a correct state and normal service after a failure.[0m
+[32m  Real record: line 9310 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     9309
+    age                            52
+    gender                         Male
+    bmi                            27.6
+    smoking_status                 Never
+    alcohol_consumption            Moderate
+    heart_rate                     99
+    systolic_bp                    146
+    diastolic_bp                   79
+    respiratory_rate               21
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED: 10640 -> [32m[1m10643[0m  (+3 committed by core-1)
+  PENDING (in-doubt 2PC transactions): 1   ABORTED: 0
+
+[1m[33m[STEP 6] Restore the crashed replica[0m  (08:17:24)
+[K  Restarting core-2... 0 s[K  Restarting core-2... 1 s[K  Restarting core-2... 2 s[K  Restarting core-2... 3 s[K  Restarting core-2... 4 s[K  Restarting core-2... 5 s
+  [32mcore-2 rejoined as STANDBY. One leader only, so no split brain.[0m
+  Replication restored: 2 Core replicas again.
+
+[1m[33m[STEP 7] Availability for this demo window[0m  (08:17:31)
+
+[35m[1m[ICS 2403 TERM] Availability[0m
+[35m  Fraction of time the system was able to serve requests: A = T_uptime / T_total.[0m
+  T_total  = 47.95 s
+  T_down   = 23.91 s (no coordinator)
+  T_uptime = 24.04 s
+  [1mAvailability = 24.04 / 47.95 = 50.14 %[0m
+
+[36m[1m================ SUMMARY ================[0m
+  Fault injected           Crash failure of core-2
+  Detected after           1288 ms (health probe)
+  Failover to              core-1
+  Recovery time (run)      23.91 s
+  MTTR (3 runs)            19.06 s
+  In-doubt (PENDING)       1
+
+[35m[1m[ICS 2403 TERM] Byzantine failure (analysed, not injected)[0m
+[35m  A node that keeps running but sends WRONG or conflicting data. Tolerating f such nodes needs 3f+1 replicas; we have 2, so we rely on Edge input validation instead.[0m
+
+[36m[1m================ MILESTONE 7: FAULT TOLERANCE AND RECOVERY ================[0m
+
+[35m[1m[ICS 2403 TERM] Fault Modeling[0m
+[35m  Deciding in advance WHICH failures the system must survive and HOW they behave. Our model: a Core replica can crash (fail-stop). The other replica, Redis and both databases stay up.[0m
+
+[1m[33m[STEP 1] Pre-flight: find the active leader[0m  (08:18:01)
+  Leader (coordinator): [32m[1mcore-1[0m  on :4001
+  Standby (replica)   : [36m[1mcore-2[0m on :4002
+
+[35m[1m[ICS 2403 TERM] Replication[0m
+[35m  Running more than one copy of a component so a copy can take over when one fails. Here: 2 Core replicas, one leader and one standby.[0m
+
+[1m[33m[STEP 2] Normal operation: stream real data through core-1[0m  (08:18:01)
+[32m  Real record: line 86154 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     86153
+    age                            75
+    gender                         Female
+    bmi                            28.9
+    smoking_status                 Never
+    alcohol_consumption            Moderate
+    heart_rate                     99
+    systolic_bp                    122
+    diastolic_bp                   72
+    respiratory_rate               23
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED in core-db: 10648 -> [32m10654[0m  (processed by core-1)
+
+[1m[33m[STEP 3] INJECT FAULT: crash the leader (core-1)[0m  (08:18:09)
+
+[35m[1m[ICS 2403 TERM] Crash Failure[0m
+[35m  A process stops suddenly and does nothing afterwards: no reply, no goodbye, no cleanup. We simulate it by killing the leader's container.[0m
+  [31m[1mX  core-1 KILLED at 08:18:10[0m  via SIGKILL on manager (hard crash, no cleanup)
+
+[1m[33m[STEP 4] Failure detection and failover[0m  (08:18:10)
+
+[35m[1m[ICS 2403 TERM] Failure Detection[0m
+[35m  Noticing that a component has failed. A crashed process cannot announce its own death, so others use timeouts: the leader lock in Redis has a 10 s TTL and expires when no heartbeat renews it.[0m
+
+[35m[1m[ICS 2403 TERM] Failover[0m
+[35m  Automatically switching work from the failed component to a healthy replica.[0m
+[K  [33mHealth probe to core-1 failed after 658 ms: failure detected[0m
+[K  Waiting for core-2 to win the election... 0.6 s[K  Waiting for core-2 to win the election... 0.8 s[K  Waiting for core-2 to win the election... 1.1 s[K  Waiting for core-2 to win the election... 1.3 s[K  Waiting for core-2 to win the election... 1.5 s[K  Waiting for core-2 to win the election... 1.8 s[K  Waiting for core-2 to win the election... 2.0 s[K  Waiting for core-2 to win the election... 2.2 s[K  Waiting for core-2 to win the election... 2.4 s[K  Waiting for core-2 to win the election... 2.6 s[K  Waiting for core-2 to win the election... 2.9 s[K  Waiting for core-2 to win the election... 3.1 s[K  Waiting for core-2 to win the election... 3.3 s[K  Waiting for core-2 to win the election... 3.5 s[K  Waiting for core-2 to win the election... 3.7 s[K  Waiting for core-2 to win the election... 3.9 s[K  Waiting for core-2 to win the election... 4.2 s[K  Waiting for core-2 to win the election... 4.4 s[K  Waiting for core-2 to win the election... 4.6 s[K  Waiting for core-2 to win the election... 4.8 s[K  Waiting for core-2 to win the election... 5.0 s[K  Waiting for core-2 to win the election... 5.3 s[K  Waiting for core-2 to win the election... 5.5 s[K  Waiting for core-2 to win the election... 5.7 s[K  Waiting for core-2 to win the election... 6.0 s[K  Waiting for core-2 to win the election... 6.2 s[K  Waiting for core-2 to win the election... 6.4 s[K  Waiting for core-2 to win the election... 6.6 s[K  Waiting for core-2 to win the election... 6.9 s[K  Waiting for core-2 to win the election... 7.1 s[K  Waiting for core-2 to win the election... 7.4 s[K  Waiting for core-2 to win the election... 7.6 s[K  Waiting for core-2 to win the election... 7.8 s[K  Waiting for core-2 to win the election... 8.1 s[K  Waiting for core-2 to win the election... 8.3 s[K  Waiting for core-2 to win the election... 8.6 s[K  Waiting for core-2 to win the election... 8.8 s[K  Waiting for core-2 to win the election... 9.0 s[K  Waiting for core-2 to win the election... 9.2 s[K  Waiting for core-2 to win the election... 9.4 s[K  Waiting for core-2 to win the election... 9.7 s[K  Waiting for core-2 to win the election... 9.9 s[K  Waiting for core-2 to win the election... 10.1 s[K  Waiting for core-2 to win the election... 10.3 s[K  Waiting for core-2 to win the election... 10.6 s
+  [32m[1mOK  core-2 IS NOW THE LEADER[0m (08:18:20)
+
+[35m[1m[ICS 2403 TERM] MTTR (Mean Time To Recovery)[0m
+[35m  Time from the failure until service is restored, averaged over several failures. Lower MTTR means higher availability.[0m
+  Recovery time this run : [1m10.86 s[0m
+  MTTR over 4 run(s)     : [1m17.01 s[0m   (log: /vagrant/m7_mttr_runs.log)
+
+[1m[33m[STEP 5] Stream data AGAIN: the new leader (core-2) must process it[0m  (08:18:20)
+
+[35m[1m[ICS 2403 TERM] Recovery[0m
+[35m  Bringing the system back to a correct state and normal service after a failure.[0m
+[32m  Real record: line 92004 of 120001 in smartwear_health_monitoring_dataset.csv[0m
+    patient_id                     92003
+    age                            34
+    gender                         Female
+    bmi                            30.1
+    smoking_status                 Former
+    alcohol_consumption            None
+    heart_rate                     88
+    systolic_bp                    149
+    diastolic_bp                   96
+    respiratory_rate               15
+  Device service started streaming readings (POST :3000/start)
+  COMMITTED: 10654 -> [32m[1m10657[0m  (+3 committed by core-2)
+  PENDING (in-doubt 2PC transactions): 1   ABORTED: 0
+
+[1m[33m[STEP 6] Restore the crashed replica[0m  (08:18:29)
+[K  Restarting core-1... 0 s[K  Restarting core-1... 1 s[K  Restarting core-1... 2 s[K  Restarting core-1... 3 s[K  Restarting core-1... 4 s[K  Restarting core-1... 5 s
+  [32mcore-1 rejoined as STANDBY. One leader only, so no split brain.[0m
+  Replication restored: 2 Core replicas again.
+
+[1m[33m[STEP 7] Availability for this demo window[0m  (08:18:35)
+
+[35m[1m[ICS 2403 TERM] Availability[0m
+[35m  Fraction of time the system was able to serve requests: A = T_uptime / T_total.[0m
+  T_total  = 34.33 s
+  T_down   = 10.86 s (no coordinator)
+  T_uptime = 23.47 s
+  [1mAvailability = 23.47 / 34.33 = 68.38 %[0m
+
+[36m[1m================ SUMMARY ================[0m
+  Fault injected           Crash failure of core-1
+  Detected after           658 ms (health probe)
+  Failover to              core-2
+  Recovery time (run)      10.86 s
+  MTTR (4 runs)            17.01 s
+  In-doubt (PENDING)       1
+
+[35m[1m[ICS 2403 TERM] Byzantine failure (analysed, not injected)[0m
+[35m  A node that keeps running but sends WRONG or conflicting data. Tolerating f such nodes needs 3f+1 replicas; we have 2, so we rely on Edge input validation instead.[0m

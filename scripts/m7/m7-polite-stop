@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# M7: POLITE stop (Swarm: SIGTERM, then SIGKILL after 10 s) of the current leader, timed. Works on any node.
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+leader_now(){ if is_leader $C1_PORT; then echo core-1; elif is_leader $C2_PORT; then echo core-2; fi; }
+other(){ [ "$1" = core-1 ] && echo core-2 || echo core-1; }
+L=$(leader_now); [ -z "$L" ] && { echo "${R}No leader found.${N}"; exit 1; }
+S=$(other "$L"); SP=$(port_of "$S")
+banner "POLITE STOP OF $L (Docker: SIGTERM, wait 10 s, then SIGKILL)"
+term "SIGTERM" "A polite 'please shut down'. Our Node.js Core does not handle it, so it keeps running and keeps renewing its badge until Docker forces it after 10 s."
+T0=$(now_ms)
+$D service scale -d "${STACK}_$L=0" >/dev/null 2>&1
+printf "  ${Y}${B}Asked Docker to stop %s at %s${N}\n" "$L" "$(ts)"
+until is_leader "$SP"; do printf "\r\e[K  waiting for %s to take the badge... %d.%d s" "$S" $(( ($(now_ms)-T0)/1000 )) $(( (($(now_ms)-T0)%1000)/100 )); sleep 0.2; done
+MS=$(( $(now_ms) - T0 ))
+printf "\r\e[K  ${G}${B}OK  %s is the new leader after %d.%02d s${N}\n" "$S" $((MS/1000)) $(( (MS%1000)/10 ))
+echo "  Expected for a polite stop: about 20 to 25 s (10 s grace + badge time left + 3.3 s check)."
+echo "  Compare with m7-hard-kill (about 7 to 13 s). Restore with: m7-restore"

@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# M7: bring both Core replicas back to 1 and confirm one leader, one standby, no zombies.
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+leader_now(){ if is_leader $C1_PORT; then echo core-1; elif is_leader $C2_PORT; then echo core-2; fi; }
+other(){ [ "$1" = core-1 ] && echo core-2 || echo core-1; }
+banner "RESTORE BOTH CORE REPLICAS"
+$D service scale -d "${STACK}_core-1=1" "${STACK}_core-2=1" >/dev/null 2>&1
+t=0; until is_up "$C1_PORT" && is_up "$C2_PORT"; do printf "\r\e[K  waiting for both Cores... %d s" $t; sleep 1; t=$((t+1)); [ $t -ge 90 ] && { echo; echo "  ${R}Timed out.${N}"; exit 1; }; done; echo
+sleep 4
+for r in core-1 core-2; do
+  p=$(port_of $r); n=$($D ps -q -f name="${STACK}_${r}." | wc -l)
+  role=$(is_leader "$p" && echo LEADER || echo STANDBY)
+  printf "  %s: %s" "$r" "$role"; [ "$n" -gt 1 ] && printf "   ${R}(%s containers on this node: zombies, clean up!)${N}" "$n"; echo
+done
+L=$(leader_now); [ -n "$L" ] && echo "  ${G}One leader ($L), one standby. Ready.${N}" || echo "  ${Y}No leader yet, wait a few seconds and rerun.${N}"

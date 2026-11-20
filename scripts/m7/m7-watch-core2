@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ICS 2403 Milestone 7, Terminal 2: watch the STANDBY replica take over.
+# Usage: m7-watch-core2 [core-2|core-1]   (default core-2)
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+csv_row(){ # prints one REAL random row from the dataset, column by column
+  [ -r "$CSV" ] || { echo "  (dataset not found at $CSV)"; return; }
+  local total pick
+  total=$(wc -l < "$CSV")
+  pick=$(( (RANDOM * 32768 + RANDOM) % (total - 1) + 2 ))
+  printf "${G}  Real record: line %s of %s in %s${N}\n" "$pick" "$total" "$(basename "$CSV")"
+  awk -F',' -v p="$pick" '{gsub(/\r/,"")} NR==1{for(i=1;i<=NF;i++)h[i]=$i} NR==p{for(i=1;i<=NF;i++) printf "    %-30s %s\n", h[i], $i; exit}' "$CSV"
+}
+TARGET="${1:-core-2}"
+PORT=$(port_of "$TARGET")
+banner "TERMINAL 2: STANDBY REPLICA $TARGET (Replication + Failover)"
+term "Replication" "$TARGET is a full copy of the Core service. While it is STANDBY it stays quiet and only competes for the leader lock."
+term "Failover" "When the leader crashes, its Redis lock expires (TTL) and $TARGET grabs it. From then on its logs show LEADER lines: it is coordinating 2PC."
+csv_row
+echo
+
+# 1) Role monitor: polls /health, so the takeover is shown even if the log stream lags.
+(
+  prev=""
+  while :; do
+    if is_leader "$PORT"; then r=LEADER; elif is_up "$PORT"; then r=STANDBY; else r=DOWN; fi
+    if [ "$r" != "$prev" ]; then
+      if [ "$r" = LEADER ] && [ -n "$prev" ]; then
+        printf "\n${G}${B}#############################################\n##  FAILOVER: %s IS NOW THE LEADER  (%s)\n#############################################${N}\n" "$TARGET" "$(ts)"
+      else
+        printf "${C}[%s] [role] %s is %s${N}\n" "$(ts)" "$TARGET" "$r"
+      fi
+      prev=$r
+    fi
+    sleep 0.5
+  done
+) &
+trap 'kill 0 2>/dev/null' EXIT INT TERM
+
+# 2) Log stream: --since (not --tail 0) so nothing printed in the last seconds is missed;
+#    the loop re-attaches if the stream ever drops.
+SINCE=30s
+while :; do
+  $D service logs -f --since "$SINCE" --no-task-ids "${STACK}_$TARGET" 2>&1 \
+  | awk -v G="$G" -v Y="$Y" -v R="$R" -v B="$B" -v N="$N" '
+      /LEADER/ { if(!seen){ print G B ">>> first LEADER log line from this replica: it is processing data now" N; seen=1 }
+                 gsub(/LEADER/, G B "LEADER" N); gsub(/txn=COMMIT/, G "txn=COMMIT" N); gsub(/txn=ABORT/, R "txn=ABORT" N) }
+      /[Ee]rror|ECONN|refused/ { $0 = Y $0 N }
+      { print; fflush() }'
+  SINCE=2s; sleep 1
+done

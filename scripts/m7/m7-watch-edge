@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# ICS 2403 Milestone 7, Terminal 1: heartbeat watchdog (Edge's view of Core) + live Availability
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+csv_row(){ # prints one REAL random row from the dataset, column by column
+  [ -r "$CSV" ] || { echo "  (dataset not found at $CSV)"; return; }
+  local total pick
+  total=$(wc -l < "$CSV")
+  pick=$(( (RANDOM * 32768 + RANDOM) % (total - 1) + 2 ))
+  printf "${G}  Real record: line %s of %s in %s${N}\n" "$pick" "$total" "$(basename "$CSV")"
+  awk -F',' -v p="$pick" '{gsub(/\r/,"")} NR==1{for(i=1;i<=NF;i++)h[i]=$i} NR==p{for(i=1;i<=NF;i++) printf "    %-30s %s\n", h[i], $i; exit}' "$CSV"
+}
+INTERVAL="${INTERVAL:-0.5}"
+MISS_LIMIT="${MISS_LIMIT:-2}"
+banner "TERMINAL 1: EDGE WATCHDOG (Failure Detection + Availability)"
+term "Failure Detection" "We send a heartbeat (GET /health) to each Core replica every ${INTERVAL} s, as Edge would before forwarding data. ${MISS_LIMIT} missed replies in a row = the replica is declared FAILED (timeout-based detector)."
+term "Availability" "A = T_uptime / T_total. The system counts as UP only while a LEADER is reachable, because only the leader can commit records."
+csv_row
+echo
+declare -A MISS STATE
+START=$(now_ms); LAST=$START; UPMS=0; SYS=""; DOWN_AT=0
+ev(){ printf "\r\e[K[%s] %b\n" "$(ts)" "$1"; }
+summary(){ echo; awk -v u=$UPMS -v t=$(( $(now_ms)-START )) 'BEGIN{printf "Final: uptime %.1f s / total %.1f s = Availability %.2f %%\n",u/1000,t/1000,(t?100*u/t:0)}'; exit 0; }
+trap summary INT TERM
+
+while :; do
+  t=$(now_ms); dt=$(( t - LAST )); LAST=$t; LEADER=""
+  for name in core-1 core-2; do
+    port=$(port_of $name)
+    body=$(curl -s -m 0.4 "http://$IP:$port/health" 2>/dev/null)
+    if [ -n "$body" ]; then
+      MISS[$name]=0
+      if echo "$body" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; then new="LEADER"; LEADER=$name; else new="STANDBY"; fi
+    else
+      MISS[$name]=$(( ${MISS[$name]:-0} + 1 ))
+      if [ "${MISS[$name]}" -ge "$MISS_LIMIT" ]; then new="DOWN"
+      else new="${STATE[$name]:-DOWN}"; ev "${Y}heartbeat to $name missed (${MISS[$name]}/$MISS_LIMIT)${N}"; fi
+    fi
+    old="${STATE[$name]:-}"
+    if [ "$new" != "$old" ]; then
+      case "$new" in
+        DOWN)    ev "${R}${B}FAILURE DETECTED: $name stopped answering heartbeats (Crash Failure)${N}";;
+        LEADER)  [ -n "$old" ] && ev "${G}${B}FAILOVER: $name is now the LEADER${N}" || ev "$name is ${G}LEADER${N}";;
+        STANDBY) [ "$old" = "DOWN" ] && ev "${C}RECOVERED: $name is back as STANDBY (replication restored)${N}" || ev "$name is ${C}STANDBY${N}";;
+      esac
+      STATE[$name]=$new
+    fi
+  done
+
+  if [ -n "$LEADER" ]; then
+    [ "$SYS" = "DOWN" ] && ev "${G}${B}SERVICE RESTORED by $LEADER after $(awk -v d=$((t-DOWN_AT)) 'BEGIN{printf "%.1f",d/1000}') s of downtime${N}"
+    SYS=UP; UPMS=$(( UPMS + dt ))
+  else
+    [ "$SYS" = "UP" ] && { ev "${R}${B}NO LEADER: system cannot commit. Availability is now DROPPING${N}"; DOWN_AT=$t; }
+    [ -z "$SYS" ] && DOWN_AT=$t
+    SYS=DOWN
+  fi
+  TOTAL=$(( t - START ))
+  A=$(awk -v u=$UPMS -v t=$TOTAL 'BEGIN{printf "%.2f", t?100*u/t:100}')
+  [ "$SYS" = UP ] && S="${G}UP${N}" || S="${R}DOWN${N}"
+  printf "\r\e[K  system:%b  core-1:%-7s core-2:%-7s  uptime %.1fs / total %.1fs  ${B}Availability %s %%${N}" \
+    "$S" "${STATE[core-1]:-?}" "${STATE[core-2]:-?}" "$(awk -v x=$UPMS 'BEGIN{print x/1000}')" "$(awk -v x=$TOTAL 'BEGIN{print x/1000}')" "$A"
+  sleep "$INTERVAL"
+done

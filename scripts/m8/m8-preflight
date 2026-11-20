@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Run before m8-all: proves the healthy cluster works end to end.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m8-lib"
+printf "\n${C}${B}================ M8 PRE-FLIGHT ================${N}\n"
+$D node ls
+echo
+$D service ls --filter name="${STACK}_" --format '  {{.Name}} {{.Replicas}}'
+echo
+check_cluster needs_core || exit 1
+wait_leader || exit 1
+smoke forward || exit 1
+printf "\n${G}${B}PRE-FLIGHT PASSED: cluster healthy, a real reading was forwarded, scored and committed.${N}\n"
+printf "Next: mv /vagrant/m8_results.csv /vagrant/m8_results_single_node.csv 2>/dev/null; m8-all\n"

@@ -1,0 +1,5 @@
+timestamp,model,scenario,concurrency,duration_s,requests,ok,errors,success_pct,throughput_rps,avg_ms,p50_ms,p95_ms,p99_ms,handled_locally,forwarded,backhaul_pct,commits,outage_s,cpu_seconds,avg_cpu_cores_pct,peak_mem_mb,containers,nodes
+2026-11-14T10:56:00,server,normal,1,30.2,2654,2654,0,100.0,87.88,11.1,3.5,49.2,115.7,2333,321,12.1,321,0.0,10.92,24.3,37.0,4,3
+2026-11-14T10:56:51,server,normal,4,30.3,3254,3254,0,100.0,107.37,36.8,10.2,157.5,275.7,2860,394,12.1,394,0.0,9.13,20.3,38.5,4,3
+2026-11-14T10:57:42,server,normal,16,30.9,4190,4190,0,100.0,135.59,116.1,74.2,390.0,687.8,3688,502,12.0,502,0.0,13.23,29.4,39.7,4,3
+2026-11-14T10:58:42,server,failure:core-1,4,40.5,5363,5343,20,99.63,131.99,26.0,9.1,95.8,270.6,5119,224,4.2,224,0.0,8.67,15.8,32.2,4,3

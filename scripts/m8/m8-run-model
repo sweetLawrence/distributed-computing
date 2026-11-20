@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# ICS 2403 Milestone 8: run one distributed-system model and record the results.
+# Usage: m8-run-model <host|workstation|server|pool|integrated> [--fail]
+# Env:   POOL_REPLICAS=3  LEVELS="1 4 16"  DURATION=30  FAIL_AT=5  FAIL_FOR=20  OUT=/vagrant/m8_results.csv
+set -u
+source "$(dirname "$(readlink -f "$0")")/m8-lib"
+MODEL="${1:-}"; FAIL=0; [ "${2:-}" = "--fail" ] && FAIL=1
+LEVELS="${LEVELS:-1 4 16}"; DURATION="${DURATION:-30}"; FAIL_AT="${FAIL_AT:-5}"; FAIL_FOR="${FAIL_FOR:-20}"
+command -v python3 >/dev/null || { echo "python3 is required: sudo apt-get install -y python3"; exit 1; }
+
+case "$MODEL" in
+  host)        DESC="Host-based: one central machine does all processing; edges are dumb relays." ;;
+  workstation) DESC="Workstation: every edge node processes its own data; no shared server." ;;
+  server)      DESC="Server-based: edges filter, one dedicated Core server does the heavy work." ;;
+  pool)        DESC="Processor pool: all work goes to a pool of ML processors spread over every node." ;;
+  integrated)  DESC="Integrated: edge processing + replicated Core + pooled ML + cloud tier (our design)." ;;
+  *) echo "Usage: m8-run-model <host|workstation|server|pool|integrated> [--fail]"; exit 1 ;;
+esac
+
+printf "\n${C}${B}================ MODEL: %s ================${N}\n" "$MODEL"
+term "Distributed system model" "$DESC"
+
+# ---------------------------------------------------------------- 1. clean start
+"$HERE/m8-baseline" || exit 1
+
+# ---------------------------------------------------------------- 2. apply model
+say "applying $MODEL configuration"
+case "$MODEL" in
+  host)
+    upd --env-add FORCE_FORWARD=1 --replicas 1 --constraint-add 'node.role==manager' "$(S edge)"
+    upd --constraint-add 'node.role==manager' "$(S core-1)"
+    upd --constraint-rm 'node.labels.cloud-side == true' --constraint-add 'node.role==manager' "$(S core-ml)"
+    scale core-2 0
+    FAIL_SVC=core-1; FAIL_DOWN=0; FAIL_UP=1 ;;
+  workstation)
+    upd --env-add PLACEMENT_THRESHOLD=1000000000 --replicas 3 --replicas-max-per-node 1 "$(S edge)"
+    scale core-1 0; scale core-2 0; scale core-ml 0
+    FAIL_SVC=edge; FAIL_DOWN=2; FAIL_UP=3 ;;
+  server)
+    upd --constraint-add 'node.role==manager' "$(S core-1)"
+    scale core-2 0
+    FAIL_SVC=core-1; FAIL_DOWN=0; FAIL_UP=1 ;;
+  pool)
+    upd --env-add FORCE_FORWARD=1 "$(S edge)"
+    upd --constraint-rm 'node.labels.cloud-side == true' --replicas "${POOL_REPLICAS:-3}" --replicas-max-per-node 1 "$(S core-ml)"
+    FAIL_SVC=core-ml; FAIL_DOWN=2; FAIL_UP=3 ;;
+  integrated)
+    FAIL_SVC=""; FAIL_DOWN=0; FAIL_UP=1 ;;
+esac
+wait_converge
+clean_zombies
+[ "$MODEL" != "workstation" ] && wait_leader
+[ "$MODEL" = "integrated" ] && FAIL_SVC=$(leader_name)
+say "waiting 10 s for edge heartbeats to see the new topology"; sleep 10
+if [ "$MODEL" = "workstation" ]; then
+  check_cluster || exit 1; smoke local || { say "${R}model not working, not measuring${N}"; exit 1; }
+else
+  check_cluster needs_core || exit 1; smoke forward || { say "${R}model not working, not measuring${N}"; exit 1; }
+fi
+
+read -r NCONT NNODES <<< "$(footprint)"
+say "compute footprint: ${B}$NCONT containers on $NNODES node(s)${N}"
+$D service ps "$(S edge)" "$(S core-1)" "$(S core-2)" "$(S core-ml)" \
+   --filter desired-state=running --format '    {{.Name}} -> {{.Node}}' 2>/dev/null
+
+term "Latency / Throughput" "Latency = time for one reading to get a reply (avg, p95). Throughput = readings handled per second."
+term "Scalability" "How throughput and latency change as load rises. We repeat the run with $LEVELS parallel clients."
+
+# ---------------------------------------------------------------- 3. load levels
+for c in $LEVELS; do
+  flush_ml_cache
+  say "load: ${B}$c parallel clients${N} for ${DURATION}s (real CSV rows -> edge /ingest)"
+  python3 "$HERE/m8-load" --model "$MODEL" --scenario normal --conc "$c" --duration "$DURATION" \
+    --edge "http://$IP:$EDGE_PORT" --csv "$CSV" --prom "$PROM" --stack "$STACK" --out "$OUT" \
+    --commits-cmd "$(commits_cmd)" --extra "containers=$NCONT" --extra "nodes=$NNODES"
+  nodes_ready || { say "${R}${B}a node went down during this run. Stopping; that row is not valid.${N}"; exit 1; }
+done
+
+# ---------------------------------------------------------------- 4. failure run
+if [ "$FAIL" = 1 ] && [ -n "$FAIL_SVC" ]; then
+  term "Reliability" "Share of requests that still succeed while part of the system fails. We take down $FAIL_SVC for ${FAIL_FOR}s during the run."
+  flush_ml_cache
+  FDUR=$(( FAIL_AT + FAIL_FOR + 15 ))
+  ( sleep "$FAIL_AT"; say "${R}${B}FAILURE: $FAIL_SVC -> $FAIL_DOWN replicas${N}"; scale "$FAIL_SVC" "$FAIL_DOWN"
+    sleep "$FAIL_FOR"; say "${G}RESTORE: $FAIL_SVC -> $FAIL_UP replicas${N}"; scale "$FAIL_SVC" "$FAIL_UP" ) &
+  python3 "$HERE/m8-load" --model "$MODEL" --scenario "failure:$FAIL_SVC" --conc 4 --duration "$FDUR" \
+    --edge "http://$IP:$EDGE_PORT" --csv "$CSV" --prom "$PROM" --stack "$STACK" --out "$OUT" \
+    --commits-cmd "$(commits_cmd)" --extra "containers=$NCONT" --extra "nodes=$NNODES"
+  wait
+  clean_zombies
+fi
+
+term "Cost" "Resources the model consumes: containers, nodes, CPU-seconds, and backhaul (share of readings sent upstream to Core)."
+say "${G}${B}$MODEL done.${N} Results appended to $OUT  (view: m8-results)"

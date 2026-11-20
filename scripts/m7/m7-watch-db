@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ICS 2403 Milestone 7, Terminal 3: core-db commit counter (durability through the failover)
+set -u
+# ---- config (override with env vars, e.g. IP=192.168.56.11 m7-...) ----
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+C1_PORT="${C1_PORT:-4001}"
+C2_PORT="${C2_PORT:-4002}"
+DEVICE_PORT="${DEVICE_PORT:-3000}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+now_ms(){ date +%s%3N; }
+ts(){ date +%H:%M:%S; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+port_of(){ [ "$1" = "core-1" ] && echo "$C1_PORT" || echo "$C2_PORT"; }
+is_up(){ [ "$(curl -s -m 1 -o /dev/null -w '%{http_code}' "http://$IP:$1/health")" = "200" ]; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+db_counts(){ # prints: COMMITTED ABORTED PENDING
+  local cid; cid=$($D ps -q -f name="${STACK}_core-db" | head -1)
+  [ -z "$cid" ] && { echo "? ? ?"; return; }
+  $D exec "$cid" psql -U core -d core -At -F' ' -c \
+   "SELECT COALESCE(SUM((status='COMMITTED')::int),0), COALESCE(SUM((status='ABORTED')::int),0), COALESCE(SUM((status='PENDING')::int),0) FROM core_records;" 2>/dev/null || echo "? ? ?"
+}
+committed(){ db_counts | awk '{print $1}'; }
+csv_row(){ # prints one REAL random row from the dataset, column by column
+  [ -r "$CSV" ] || { echo "  (dataset not found at $CSV)"; return; }
+  local total pick
+  total=$(wc -l < "$CSV")
+  pick=$(( (RANDOM * 32768 + RANDOM) % (total - 1) + 2 ))
+  printf "${G}  Real record: line %s of %s in %s${N}\n" "$pick" "$total" "$(basename "$CSV")"
+  awk -F',' -v p="$pick" '{gsub(/\r/,"")} NR==1{for(i=1;i<=NF;i++)h[i]=$i} NR==p{for(i=1;i<=NF;i++) printf "    %-30s %s\n", h[i], $i; exit}' "$CSV"
+}
+banner "TERMINAL 3: core-db (Recovery + Consistency)"
+term "Recovery" "After the crash, committed data must still be there and new data must start committing again under the new leader."
+term "In-doubt transaction" "A 2PC record stuck in PENDING because the coordinator died mid-protocol. After recovery this should be 0."
+csv_row
+echo
+printf "${B}%-9s %-10s %-8s %-8s %-8s %s${N}\n" TIME COMMITTED "+/s" ABORTED PENDING STATE
+PREV=""; MAX=0; PAUSE=0; FLOWED=0
+while :; do
+  read -r CM AB PE <<< "$(db_counts)"
+  if [ "$CM" = "?" ]; then printf "%-9s ${Y}core-db not reachable${N}\n" "$(ts)"; sleep 1; continue; fi
+  D1=0; [ -n "$PREV" ] && D1=$(( CM - PREV ))
+  if [ "$D1" -gt 0 ]; then
+    [ "$PAUSE" -ge 2 ] && printf "${G}${B}--> WRITES RESUMED after %d s pause. Count never went down: no committed record lost.${N}\n" "$PAUSE"
+    PAUSE=0; FLOWED=1; S="${G}flowing${N}"
+  elif [ "$FLOWED" = 1 ]; then
+    PAUSE=$(( PAUSE + 1 )); S="${Y}paused ${PAUSE}s (no coordinator / stream idle)${N}"
+  else S="idle"; fi
+  [ "$CM" -lt "$MAX" ] && S="${R}${B}COUNT DECREASED: data loss!${N}"
+  [ "$CM" -gt "$MAX" ] && MAX=$CM
+  [ "$PE" -gt 0 ] 2>/dev/null && S="$S ${R}(in-doubt PENDING)${N}"
+  printf "%-9s ${B}%-10s${N} %-8s %-8s %-8s %b\n" "$(ts)" "$CM" "+$D1" "$AB" "$PE" "$S"
+  PREV=$CM; sleep 1
+done

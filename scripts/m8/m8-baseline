@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Reset every service to docker-stack.yml (the Integrated model).
+# Usage: m8-baseline              (device stays at 0 so it does not pollute experiments)
+#        m8-baseline --with-device (normal running stack, use when you are finished)
+set -u
+source "$(dirname "$(readlink -f "$0")")/m8-lib"
+say "restoring stack from $INFRA/docker-stack.yml"
+( cd "$INFRA" && $D stack deploy -c docker-stack.yml --resolve-image never "$STACK" >/dev/null ) \
+  || { say "${R}stack deploy failed${N}"; exit 1; }
+[ "${1:-}" = "--with-device" ] || scale device 0
+wait_converge
+clean_zombies
+wait_leader
+say "${G}baseline ready${N}"

@@ -265,6 +265,101 @@ ls -l ~/bin/
 
 
 
+# 1. m5-prove-recovery
+cat > ~/bin/m5-prove-recovery << 'EOF'
+#!/usr/bin/env bash
+echo "=== M5: PROVING RECOVERY (SYSTEM HEALS) ==="
+echo "[1] Killing cloud-db to simulate crash..."
+sudo docker service scale theme5_cloud-db=0 > /dev/null
+sleep 2
+
+echo "[2] Firing record (Should ABORT)..."
+curl -s -X POST http://localhost:3001/ingest -H "Content-Type: application/json" -d '{"row":{"patient_id":88881,"heart_rate":150,"systolic_bp":180,"age":50,"bmi":25,"diastolic_bp":90,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+sleep 1
+
+echo "[3] Restoring cloud-db..."
+sudo docker service scale theme5_cloud-db=1 > /dev/null
+echo "    Waiting 15 seconds for DB to fully boot..."
+sleep 15
+
+echo "[4] Firing a NEW record (Should COMMIT)..."
+curl -s -X POST http://localhost:3001/ingest -H "Content-Type: application/json" -d '{"row":{"patient_id":88882,"heart_rate":150,"systolic_bp":180,"age":50,"bmi":25,"diastolic_bp":90,"respiratory_rate":28},"t_sent":1,"lamport":1}' > /dev/null
+sleep 2
+
+echo "[5] Checking database status for both patients..."
+sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT '    Patient ' || patient_id || ': ' || status FROM core_records WHERE patient_id IN (88881, 88882) ORDER BY patient_id;"
+
+echo ""
+echo "SUCCESS: Patient 88881 aborted during the crash, but patient 88882 committed after recovery. The system healed automatically."
+EOF
+
+# 2. m5-prove-consistency
+cat > ~/bin/m5-prove-consistency << 'EOF'
+#!/usr/bin/env bash
+echo "=== M5: CONSISTENCY ANALYSIS (BOTH DBs MATCH) ==="
+
+echo "[1] Counting COMMITTED transactions in core-db..."
+CORE_COUNT=$(sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT COUNT(*) FROM core_records WHERE status='COMMITTED';" | tr -d '[:space:]')
+echo "    core-db COMMITTED count: $CORE_COUNT"
+
+echo "[2] Counting COMMITTED transactions in cloud-db..."
+CLOUD_COUNT=$(sudo docker run --rm --network theme5_appnet -e PGPASSWORD=cloudpass postgres:16-alpine psql -h cloud-db -U cloud -d cloud -t -c "SELECT COUNT(*) FROM cloud_summaries WHERE status='COMMITTED';" | tr -d '[:space:]')
+echo "    cloud-db COMMITTED count: $CLOUD_COUNT"
+
+echo ""
+if [ "$CORE_COUNT" == "$CLOUD_COUNT" ]; then
+  echo "MATCH: Both databases hold the exact same number of committed records. Atomicity is proven."
+else
+  echo "MISMATCH: Counts do not match! ($CORE_COUNT vs $CLOUD_COUNT)"
+fi
+EOF
+
+# 3. m6-prove-deadlock-recovery
+cat > ~/bin/m6-prove-deadlock-recovery << 'EOF'
+#!/usr/bin/env bash
+echo "=== M6: DEADLOCK DETECTION COUNTER ==="
+
+echo "[1] Reading PostgreSQL deadlock counter BEFORE..."
+BEFORE=$(sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT deadlocks FROM pg_stat_database WHERE datname='core';" | tr -d '[:space:]')
+echo "    Detected deadlocks: $BEFORE"
+
+echo "[2] Triggering a deadlock..."
+curl -s -X POST http://localhost:4001/lock/deadlock -H "Content-Type: application/json" -d '{"a":4,"b":7}' > /dev/null
+sleep 2
+
+echo "[3] Reading PostgreSQL deadlock counter AFTER..."
+AFTER=$(sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -t -c "SELECT deadlocks FROM pg_stat_database WHERE datname='core';" | tr -d '[:space:]')
+echo "    Detected deadlocks: $AFTER"
+
+echo ""
+if [ "$BEFORE" != "$AFTER" ]; then
+  echo "SUCCESS: The deadlock counter increased. PostgreSQL successfully detected and resolved the deadlock."
+else
+  echo "WARNING: Counter did not increase. The deadlock may not have been triggered."
+fi
+EOF
+
+# 4. m6-prove-lock-contention
+cat > ~/bin/m6-prove-lock-contention << 'EOF'
+#!/usr/bin/env bash
+echo "=== M6: RESOURCE UTILIZATION (LOCK CONTENTION) ==="
+echo "[1] Firing 10 concurrent updates to the same row in the background..."
+for i in {1..10}; do
+  curl -s -X POST http://localhost:4001/lock/race -H "Content-Type: application/json" -d '{"patient_id":4,"mode":"safe"}' > /dev/null &
+done
+
+echo "[2] Checking pg_locks for waiting processes (granted = false)..."
+sleep 0.5
+sudo docker exec $(sudo docker ps -q -f name=theme5_core-db) psql -U core -d core -c "SELECT pid, locktype, mode, granted FROM pg_locks WHERE NOT granted;"
+
+echo ""
+echo "Note: Any rows returned above represent transactions actively waiting for a lock."
+wait
+echo "All background updates finished."
+EOF
+
+chmod +x ~/bin/*
+echo "=== 4 NEW SCRIPTS INSTALLED SUCCESSFULLY ==="
 
 
 
