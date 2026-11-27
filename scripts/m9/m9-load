@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""ICS 2403 M9 load generator.
+Sends REAL rows from the dataset to Edge /ingest with N parallel clients and records,
+per route, how each reading was handled:
+  local            answered by the Edge itself
+  forwarded-direct sent to a Core that was the leader
+  forwarded-hop    sent to the standby, which forwarded it to the leader (replication transparency hop)
+  buffered         stored in Kafka because no Core could take it (failure transparency)
+  error            failed
+It knows which rows are critical (same rule as Edge), so it can compute DURABILITY:
+critical readings that end up COMMITTED / critical readings sent."""
+import argparse, csv, json, os, subprocess, sys, threading, time, urllib.request
+from datetime import datetime
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--experiment", required=True)
+ap.add_argument("--variant", default="")
+ap.add_argument("--conc", type=int, default=4)
+ap.add_argument("--duration", type=int, default=30)
+ap.add_argument("--edge", default="http://192.168.56.11:3001")
+ap.add_argument("--csv", default="/vagrant/data/smartwear_health_monitoring_dataset.csv")
+ap.add_argument("--out", default="/vagrant/m9_results.csv")
+ap.add_argument("--commits-cmd", default="")
+ap.add_argument("--drain-wait", type=int, default=0, help="after the run, wait up to N s for buffered readings to be committed")
+ap.add_argument("--timeline", default="", help="write a per-second timeline CSV here")
+ap.add_argument("--extra", action="append", default=[])
+a = ap.parse_args()
+
+def num(v):
+    v = v.strip()
+    try: return int(v)
+    except ValueError:
+        try: return float(v)
+        except ValueError: return v
+with open(a.csv, newline="") as f:
+    rows = [{k.strip(): num(v) for k, v in r.items() if k} for r in csv.DictReader(f)]
+def critical(r):
+    try: return float(r.get("heart_rate", 0)) > 120 or float(r.get("systolic_bp", 0)) > 160 or float(r.get("respiratory_rate", 0)) > 25
+    except (TypeError, ValueError): return False
+
+def commits():
+    if not a.commits_cmd: return None
+    try: return int(subprocess.run(a.commits_cmd, shell=True, capture_output=True, text=True, timeout=20).stdout.strip())
+    except Exception: return None
+
+lock = threading.Lock(); res = []; counter = [0]; stop = threading.Event()
+url = a.edge.rstrip("/") + "/ingest"; T0 = time.time()
+
+def worker():
+    while not stop.is_set():
+        with lock:
+            row = rows[counter[0] % len(rows)]; counter[0] += 1; lam = counter[0]
+        body = json.dumps({"row": row, "t_sent": int(time.time() * 1000), "lamport": lam}).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        t = time.time(); route = "error"
+        try:
+            with urllib.request.urlopen(req, timeout=8) as r:
+                d = json.loads(r.read() or b"{}"); st = d.get("status", "?")
+                if st == "handled-locally": route = "local"
+                elif st == "buffered": route = "buffered"
+                elif st == "forwarded": route = "forwarded-hop" if (d.get("core_response") or {}).get("forwarded_from") else "forwarded-direct"
+                else: route = st
+        except Exception:
+            time.sleep(0.05)
+        with lock: res.append((t - T0, route, (time.time() - t) * 1000, critical(row)))
+
+c0 = commits()
+ths = [threading.Thread(target=worker, daemon=True) for _ in range(a.conc)]
+for th in ths: th.start()
+while time.time() - T0 < a.duration:
+    time.sleep(1)
+    with lock:
+        n = len(res); b = sum(1 for x in res if x[1] == "buffered"); e = sum(1 for x in res if x[1] == "error")
+    sys.stderr.write(f"\r  {int(time.time()-T0):3d}s  sent={n}  buffered={b}  errors={e}   "); sys.stderr.flush()
+stop.set()
+for th in ths: th.join(timeout=10)
+elapsed = time.time() - T0; sys.stderr.write("\n")
+
+c_after = commits()
+if a.drain_wait and c0 is not None:
+    sys.stderr.write(f"  waiting up to {a.drain_wait}s for buffered readings to be drained and committed...\n")
+    last = c_after; stable = 0; t_end = time.time() + a.drain_wait
+    while time.time() < t_end and stable < 8:
+        time.sleep(1); cur = commits()
+        if cur is None: continue
+        stable = stable + 1 if cur == last else 0; last = cur
+        sys.stderr.write(f"\r  committed so far: {cur - c0}   "); sys.stderr.flush()
+    c_after = last; sys.stderr.write("\n")
+
+routes = ["local", "forwarded-direct", "forwarded-hop", "buffered", "error"]
+cnt = {k: 0 for k in routes}; lat = {k: [] for k in routes}
+for _, r, l, _c in res:
+    k = r if r in cnt else "error"; cnt[k] += 1; lat[k].append(l)
+def avg(v): return round(sum(v) / len(v), 1) if v else ""
+okl = sorted(l for _, r, l, _c in res if r != "error")
+def pct(p): return round(okl[min(len(okl) - 1, int(len(okl) * p))], 1) if okl else ""
+crit = sum(1 for x in res if x[3]); total = len(res); ok = total - cnt["error"]
+saved = (c_after - c0) if (c0 is not None and c_after is not None) else ""
+dur = round(min(100.0, 100 * saved / crit), 1) if (saved != "" and crit) else ""
+outage, start = 0.0, None
+for t, r, _, _c in sorted(res):
+    if r == "error": start = t if start is None else start; outage = max(outage, t - start)
+    else: start = None
+
+rec = {"timestamp": datetime.now().isoformat(timespec="seconds"), "experiment": a.experiment, "variant": a.variant,
+       "concurrency": a.conc, "duration_s": round(elapsed, 1), "requests": total, "ok": ok, "errors": cnt["error"],
+       "success_pct": round(100 * ok / total, 2) if total else "", "throughput_rps": round(ok / elapsed, 2) if elapsed else "",
+       "avg_ms": round(sum(okl) / len(okl), 1) if okl else "", "p95_ms": pct(0.95),
+       "n_local": cnt["local"], "n_fwd_direct": cnt["forwarded-direct"], "n_fwd_hop": cnt["forwarded-hop"], "n_buffered": cnt["buffered"],
+       "lat_local_ms": avg(lat["local"]), "lat_fwd_direct_ms": avg(lat["forwarded-direct"]), "lat_fwd_hop_ms": avg(lat["forwarded-hop"]), "lat_buffered_ms": avg(lat["buffered"]),
+       "critical_sent": crit, "critical_committed": saved, "durability_pct": dur, "outage_s": round(outage, 1)}
+for kv in a.extra:
+    k, _, v = kv.partition("="); rec[k] = v
+
+new = not os.path.exists(a.out) or os.path.getsize(a.out) == 0
+with open(a.out, "a", newline="") as f:
+    w = csv.DictWriter(f, fieldnames=list(rec.keys()))
+    if new: w.writeheader()
+    w.writerow(rec)
+
+if a.timeline:
+    with open(a.timeline, "w", newline="") as f:
+        w = csv.writer(f); w.writerow(["second", "requests", "errors", "buffered", "avg_ms"])
+        for s in range(int(elapsed) + 1):
+            b = [x for x in res if int(x[0]) == s]
+            w.writerow([s, len(b), sum(1 for x in b if x[1] == "error"), sum(1 for x in b if x[1] == "buffered"),
+                        round(sum(x[2] for x in b) / len(b), 1) if b else ""])
+
+G, Y, B_, N = "\033[32m", "\033[33m", "\033[1m", "\033[0m"
+print(f"  {B_}{a.experiment} | {a.variant} | {a.conc} clients{N}")
+print(f"    requests {total}  ok {ok}  errors {cnt['error']}  success {rec['success_pct']}%   throughput {rec['throughput_rps']} req/s   avg {rec['avg_ms']} ms  p95 {rec['p95_ms']} ms")
+print(f"    routes: local {cnt['local']}  forwarded-direct {cnt['forwarded-direct']}  forwarded-hop {cnt['forwarded-hop']}  buffered {cnt['buffered']}")
+print(f"    latency by route (ms): local {rec['lat_local_ms']}  direct {rec['lat_fwd_direct_ms']}  hop {rec['lat_fwd_hop_ms']}  buffered {rec['lat_buffered_ms']}")
+if saved != "":
+    print(f"    critical sent {crit}  committed {saved}  {G}{B_}durability {dur}%{N}")
+if outage > 0: print(f"    {Y}longest outage {rec['outage_s']} s{N}")

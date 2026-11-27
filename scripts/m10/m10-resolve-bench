@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# M10 RESOLUTION LATENCY ANALYSIS: resolve "core" N times with each method (timed inside Edge).
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+COUNT="${COUNT:-500}"
+banner "M10: RESOLUTION LATENCY (n=$COUNT per method)"
+term "Name resolution latency" "Time to turn a name into a location. Static maps are instant but cannot adapt; name servers adapt but cost a network round trip; broadcast waits for answers."
+for spec in "core static" "core dns" "core consul" "core consul-dns" "core kv" "core broadcast" "/core prefix"; do
+  set -- $spec
+  M_N=$COUNT; [ "$2" = broadcast ] && M_N=$(( COUNT < 60 ? COUNT : 60 ))
+  curl -s -m 300 "$EDGE/naming/bench?method=$2&name=$1&n=$M_N" | python3 -c "
+import sys,json,csv,os,datetime
+d=json.load(sys.stdin); out=os.environ.get('M10_OUT','/vagrant/m10_results.csv')
+rec={'timestamp':datetime.datetime.now().isoformat(timespec='seconds'),'experiment':'resolution','method':d['method'],'name':d['name'],'k':0,'n':d['n'],
+     'errors':d['errors'],'avg_ms':d['avgMs'],'p50_ms':d['p50Ms'],'p95_ms':d['p95Ms'],'max_ms':d['maxMs'],'extra':d.get('replica','')}
+new=not os.path.exists(out) or os.path.getsize(out)==0
+w=csv.DictWriter(open(out,'a',newline=''),fieldnames=list(rec.keys()))
+if new: w.writeheader()
+w.writerow(rec)
+print('  %-12s avg %8.3f ms   p50 %8.3f   p95 %8.3f   max %8.3f   errors %s/%s' % (d['method'],d['avgMs'],d['p50Ms'],d['p95Ms'],d['maxMs'],d['errors'],d['n']))"
+done
+echo "Saved to $M10_OUT"

@@ -1,0 +1,63 @@
+# Shared helpers for the M9 and M10 commands. Sourced, not run.
+IP="${IP:-192.168.56.11}"
+STACK="${STACK:-theme5}"
+INFRA="${INFRA:-/vagrant/infra}"
+CSV="${CSV:-/vagrant/data/smartwear_health_monitoring_dataset.csv}"
+M9_OUT="${M9_OUT:-/vagrant/m9_results.csv}"
+M10_OUT="${M10_OUT:-/vagrant/m10_results.csv}"
+EDGE="http://$IP:3001"; CONSUL="http://$IP:8500"
+C1_PORT=4001; C2_PORT=4002
+if docker info >/dev/null 2>&1; then D="docker"; else D="sudo docker"; fi
+B=$'\e[1m'; R=$'\e[31m'; G=$'\e[32m'; Y=$'\e[33m'; C=$'\e[36m'; M=$'\e[35m'; N=$'\e[0m'
+HERE="$(dirname "$(readlink -f "$0")")"
+
+say(){ printf "${C}[%s]${N} %s\n" "$(date +%H:%M:%S)" "$*"; }
+term(){ printf "\n${M}${B}[ICS 2403 TERM] %s${N}\n${M}  %s${N}\n" "$1" "$2"; }
+banner(){ printf "\n${C}${B}================ %s ================${N}\n" "$1"; }
+S(){ echo "${STACK}_$1"; }
+upd(){ $D service update -d --quiet "$@" >/dev/null 2>&1 || say "${R}update failed: $*${N}"; }
+scale(){ $D service scale -d "$(S "$1")=$2" >/dev/null 2>&1; }
+is_leader(){ curl -s -m 1 "http://$IP:$1/health" | grep -Eq '"isLeader"[[:space:]]*:[[:space:]]*true'; }
+leader_name(){ if is_leader $C1_PORT; then echo core-1; elif is_leader $C2_PORT; then echo core-2; fi; }
+
+wait_converge(){
+  local t=0 pend
+  while :; do
+    pend=$($D service ls --filter name="${STACK}_" --format '{{.Replicas}}' | awk '{split($1,a,"/"); if (a[1]!=a[2]) n++} END{print n+0}')
+    [ "$pend" = 0 ] && return 0
+    t=$((t+2)); [ $t -ge 180 ] && { say "${Y}services still converging after 180 s, continuing${N}"; return 1; }
+    sleep 2
+  done
+}
+clean_zombies(){
+  local s live c
+  for s in $($D service ls --filter name="${STACK}_" --format '{{.Name}}'); do
+    live=$($D service ps -q --no-trunc --filter desired-state=running "$s" 2>/dev/null | tr '\n' '|'); live=${live%|}
+    for c in $($D ps --format '{{.Names}}' --filter name="$s."); do
+      if [ -z "$live" ] || ! echo "$c" | grep -Eq "$live"; then say "${Y}removing zombie container $c${N}"; $D rm -f "$c" >/dev/null; fi
+    done
+  done
+}
+wait_leader(){
+  local t=0
+  until is_leader $C1_PORT || is_leader $C2_PORT; do t=$((t+1)); [ $t -ge 90 ] && { say "${R}no Core leader after 90 s${N}"; return 1; }; sleep 1; done
+  say "Core leader: $(leader_name)"
+}
+commits_cmd(){
+  local cid; cid=$($D ps -q -f name="$(S core-db)" | head -1)
+  echo "$D exec $cid psql -U core -d core -At -c \"SELECT count(*) FROM core_records WHERE status='COMMITTED'\""
+}
+node_of(){ $D service ps "$(S "$1")" --filter desired-state=running --format '{{.Node}}' 2>/dev/null | head -1; }
+edge_health(){ curl -s -m 2 "$EDGE/health"; }
+json(){ python3 -c "import sys,json; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
+
+check_ready(){ # nodes Ready, nothing pending, kafka + consul running, a leader exists
+  local down
+  down=$($D node ls --format '{{.Hostname}} {{.Status}}' | awk '$2!="Ready"{print $1}' | tr '\n' ' ')
+  [ -n "$down" ] && { say "${R}${B}node(s) not Ready: $down${N}"; return 1; }
+  for s in kafka consul; do
+    $D service ls --filter name="$(S $s)" --format '{{.Replicas}}' | grep -q '^1/1' || { say "${R}${B}$s is not running (check: sudo docker service ps $(S $s) --no-trunc)${N}"; return 1; }
+  done
+  wait_leader || return 1
+  say "${G}cluster ready: nodes up, kafka and consul running, leader elected${N}"
+}

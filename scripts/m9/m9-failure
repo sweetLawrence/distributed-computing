@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# M9 FAILURE TRANSPARENCY: baseline (no buffer) vs proposed (Kafka store-and-forward).
+# Both Cores are removed for 20 s while real readings flow; then we count how many
+# critical readings were eventually COMMITTED (durability).
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+DOWN_AT="${DOWN_AT:-10}"; DOWN_FOR="${DOWN_FOR:-20}"; DUR="${DURATION:-50}"
+banner "M9: FAILURE TRANSPARENCY (baseline vs Kafka store-and-forward)"
+term "Failure transparency" "A failure is hidden from the user: the device still gets an answer and its critical reading is not lost, even while every Core is down."
+check_ready || exit 1
+scale device 0
+for VAR in 0 1; do
+  NAME=$([ "$VAR" = 1 ] && echo "proposed: kafka buffer ON" || echo "baseline: buffer OFF")
+  printf "\n${B}---- %s ----${N}\n" "$NAME"
+  upd --env-add EDGE_BUFFER=$VAR "$(S edge)"; wait_converge; sleep 12
+  python3 "$HERE/m9-load" --experiment failure --variant "$NAME" --conc 4 --duration "$DUR" --drain-wait 90 \
+    --edge "$EDGE" --csv "$CSV" --out "$M9_OUT" --commits-cmd "$(commits_cmd)" --timeline "/vagrant/m9_timeline_failure_$VAR.csv" &
+  LP=$!
+  sleep "$DOWN_AT"; printf "\n"; say "${R}${B}ALL CORES DOWN (core-1=0, core-2=0) for ${DOWN_FOR}s${N}"; scale core-1 0; scale core-2 0
+  sleep "$DOWN_FOR"; printf "\n"; say "${G}${B}cores restored${N}"; scale core-1 1; scale core-2 1
+  wait $LP
+  wait_converge; clean_zombies; wait_leader
+done
+upd --env-add EDGE_BUFFER=1 "$(S edge)"
+say "Edge buffer left ON (stack default). Compare the two rows with: m9-results"

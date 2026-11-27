@@ -6,6 +6,8 @@ const { twoPhaseCommit } = require('./twopc');
 const lockdemo = require('./lockdemo');
 const mlcache = require('./mlcache');
 const metrics = require('./metrics');
+const startDrain = require('./drain');
+const startNaming = require('./naming');
 
 const app = express();
 app.use(express.json());
@@ -14,10 +16,12 @@ const PORT = process.env.PORT || 4000;
 const REPLICA_ID = process.env.REPLICA_ID || 'core-?';
 const PEER_URL = REPLICA_ID === 'core-1' ? 'http://core-2:4000' : 'http://core-1:4000';
 const ML_URL = process.env.ML_URL || 'http://core-ml:5000';
+const DRAIN_ENABLED = (process.env.DRAIN_ENABLED || '1') === '1';
 
 let processed = 0, queueLength = 0, failureRisk = 0.1, simDelayMs = 0, lastLogAt = 0;
 let txnCount = 0, commitCount = 0, abortCount = 0;
 let txnTotalMs = 0, txnMaxMs = 0;
+let drain = null, naming = null;
 
 app.get('/metrics', async (_req, res) => { res.set('Content-Type', metrics.register.contentType); res.end(await metrics.register.metrics()); });
 app.get('/health', (_req, res) => res.json({
@@ -28,7 +32,9 @@ app.get('/health', (_req, res) => res.json({
   electionMessages: leader.getElectionMessages(),
   txnCount, commitCount, abortCount,
   txnAvgMs: txnCount ? +(txnTotalMs / txnCount).toFixed(2) : 0,
-  txnMaxMs
+  txnMaxMs,
+  drain: drain ? drain.stats : null,
+  address: naming ? naming.ip : null
 }));
 
 async function callML(row) {
@@ -40,6 +46,35 @@ async function callML(row) {
     }, { timeout: 2000 });
     return r.data.risk_probability;
   } catch { return null; }
+}
+
+// Leader-side work for one critical reading: ML score (with shared cache) + 2PC.
+// Used by /process (synchronous path) and by the Kafka drain (store-and-forward path).
+async function processCritical(row) {
+  let riskProb = null;
+  let cacheResult = { hit: false };
+  if (row && row.patient_id != null) {
+    cacheResult = await mlcache.get(row.patient_id);
+    if (cacheResult.hit) { riskProb = cacheResult.risk_probability; metrics.mlCache.inc({ result: 'hit' }); }
+    else metrics.mlCache.inc({ result: 'miss' });
+  }
+  if (riskProb === null) {
+    metrics.mlCall.inc();
+    riskProb = await callML(row);
+    if (riskProb !== null && row && row.patient_id != null) await mlcache.set(row.patient_id, riskProb);
+  }
+  let txn = null;
+  if (riskProb !== null) {
+    txnCount++;
+    txn = await twoPhaseCommit(row, riskProb);
+    if (txn.outcome === 'COMMIT') { commitCount++; metrics.txn.inc({ outcome: 'COMMIT' }); } else { abortCount++; metrics.txn.inc({ outcome: 'ABORT' }); }
+    if (txn.durationMs != null) {
+      metrics.txnDuration.observe(txn.durationMs);
+      txnTotalMs += txn.durationMs;
+      if (txn.durationMs > txnMaxMs) txnMaxMs = txn.durationMs;
+    }
+  }
+  return { riskProb, txn, cacheResult };
 }
 
 app.post('/process', async (req, res) => {
@@ -60,36 +95,7 @@ app.post('/process', async (req, res) => {
       }
     }
 
-    // M11 — distributed shared state: check Redis cache before calling ML
-    let riskProb = null;
-    let cacheResult = { hit: false };
-    if (row && row.patient_id != null) {
-      cacheResult = await mlcache.get(row.patient_id);
-      if (cacheResult.hit) {
-        riskProb = cacheResult.risk_probability;
-        metrics.mlCache.inc({ result: 'hit' });
-      } else {
-        metrics.mlCache.inc({ result: 'miss' });
-      }
-    }
-    if (riskProb === null) {
-      metrics.mlCall.inc();
-      riskProb = await callML(row);
-      if (riskProb !== null && row && row.patient_id != null) {
-        await mlcache.set(row.patient_id, riskProb);
-      }
-    }
-    let txn = null;
-    if (riskProb !== null) {
-      txnCount++;
-      txn = await twoPhaseCommit(row, riskProb);
-      if (txn.outcome === 'COMMIT') { commitCount++; metrics.txn.inc({ outcome: 'COMMIT' }); } else { abortCount++; metrics.txn.inc({ outcome: 'ABORT' }); }
-      if (txn.durationMs != null) metrics.txnDuration.observe(txn.durationMs);
-      if (txn.durationMs != null) {
-        txnTotalMs += txn.durationMs;
-        if (txn.durationMs > txnMaxMs) txnMaxMs = txn.durationMs;
-      }
-    }
+    const { riskProb, txn } = await processCritical(row);
 
     const now = Date.now();
     if (processed <= 5 || now - lastLogAt > 500) {
@@ -140,14 +146,37 @@ app.post('/lock/deadlock', async (req, res) => {
   res.json(result);
 });
 
-
 app.get('/mlcache', async (_req, res) => {
   const s = await mlcache.stats();
   res.json({ replica: REPLICA_ID, ttlSec: mlcache.TTL_SEC, ...s });
 });
 
+// ---- M9: drain status ----
+app.get('/drain', (_req, res) => res.json({ replica: REPLICA_ID, isLeader: leader.isLeader(), enabled: DRAIN_ENABLED, ...(drain ? drain.stats : {}) }));
+
 (async () => {
   await init();
   leader.start();
   app.listen(PORT, () => console.log(`[core:${REPLICA_ID}] listening on ${PORT}`));
+  const log = m => console.log(`[core:${REPLICA_ID}] ${m}`);
+  naming = startNaming({ replicaId: REPLICA_ID, port: PORT, isLeader: leader.isLeader, publisher: leader.redis, log });
+  if (DRAIN_ENABLED) {
+    drain = startDrain({
+      replicaId: REPLICA_ID, isLeader: leader.isLeader, log,
+      processRow: async (row, lam) => { if (lam) leader.observe(lam); else leader.tick(); return processCritical(row); }
+    });
+  }
 })();
+
+// M7 improvement: a polite stop (SIGTERM) now hands the lock back instead of
+// holding it for Docker's 10 s grace period, so the standby can take over quickly.
+let stopping = false;
+process.on('SIGTERM', async () => {
+  if (stopping) return; stopping = true;
+  console.log(`[core:${REPLICA_ID}] SIGTERM: releasing leader lock and deregistering`);
+  try { if (drain) await drain.stop(); } catch {}
+  try { if (naming) await naming.deregister(); } catch {}
+  // release the lock last, then exit at once, so our own election timer cannot re-take it
+  try { if ((await leader.redis.get('core:leader')) === REPLICA_ID) await leader.redis.del('core:leader'); } catch {}
+  process.exit(0);
+});

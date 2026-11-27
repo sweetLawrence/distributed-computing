@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# M10: show the naming subsystem live: Consul catalog, KV hierarchy, and one resolution by every method.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+banner "M10: NAME -> RESOLUTION -> LOCATION"
+term "Naming" "Clients ask for a logical NAME (core). A resolution mechanism turns it into a LOCATION (IP:port). We compare seven mechanisms."
+say "Consul catalog (name server with health checks):"
+curl -s -m 3 "$CONSUL/v1/health/service/core" | json '"\n".join("  core  %-8s %s:%s  tags=%s  health=%s" % (e["Service"]["ID"], e["Service"]["Address"], e["Service"]["Port"], ",".join(e["Service"]["Tags"]), "/".join(c["Status"] for c in e["Checks"])) for e in d)'
+curl -s -m 3 "$CONSUL/v1/health/service/edge" | json '"\n".join("  edge  %-8s %s:%s  health=%s" % (e["Service"]["ID"], e["Service"]["Address"], e["Service"]["Port"], "/".join(c["Status"] for c in e["Checks"])) for e in d)'
+say "KV hierarchy (LDAP-style paths):"
+curl -s -m 3 "$CONSUL/v1/kv/theme5/services?recurse=true" | json '"\n".join("  %-40s = %s" % (e["Key"], __import__("base64").b64decode(e["Value"] or b"").decode()) for e in d if not e["Key"].split("/")[2].startswith("svc-"))'
+echo
+printf "${B}  %-22s %-12s %-10s %s${N}\n" "name" "method" "latency" "location(s)"
+for spec in "core static" "core dns" "core consul" "core consul-dns" "core kv" "core broadcast" "/core/leader prefix" "/core prefix" "/ml prefix"; do
+  set -- $spec
+  curl -s -m 5 "$EDGE/naming/resolve?name=$1&method=$2" | python3 -c "
+import sys,json; d=json.load(sys.stdin)
+print('  %-22s %-12s %-10s %s' % (d['name'], d['method'], str(d['latencyMs'])+' ms', ', '.join(d.get('result') or [d.get('error','?')])))"
+done
+echo; say "Prefix table and static map size:"; curl -s -m 3 "$EDGE/naming/info" | json '"  prefix table: %s\n  static entries: %s   edge naming mode: %s" % (d["prefixTable"], d["staticEntries"], d["namingMode"])'

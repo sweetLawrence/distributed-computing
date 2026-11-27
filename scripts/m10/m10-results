@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Print M10 results. Optional filter: m10-results resolution  (or scalability, process)
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+[ -s "$M10_OUT" ] || { echo "No results yet in $M10_OUT"; exit 1; }
+python3 - "$M10_OUT" "$@" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1]))); f = sys.argv[2:]
+if f: rows = [r for r in rows if r["experiment"] in f]
+cols=[("experiment",12),("method",12),("k",5),("n",5),("avg_ms",9),("p50_ms",9),("p95_ms",9),("max_ms",9),("errors",6),("extra",60)]
+print("  ".join(c.ljust(w) for c,w in cols)); print("-"*140)
+for r in rows: print("  ".join(str(r.get(c,"")).ljust(w)[:w] for c,w in cols))
+PY
+echo; echo "Full data: $M10_OUT"

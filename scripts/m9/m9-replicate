@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# M9 REPLICATION TRANSPARENCY: change the number of Edge replicas under load.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+banner "M9: REPLICATION TRANSPARENCY (edge 2 -> 4 -> 1 -> 2)"
+term "Replication transparency" "Clients send to one logical address (edge:3001). How many copies sit behind it, and which one answers, is hidden by the Swarm routing mesh."
+check_ready || exit 1
+scale device 0
+TL=/vagrant/m9_timeline_replication.csv
+python3 "$HERE/m9-load" --experiment replication --variant "edge 2->4->1->2" --conc 4 --duration 60 \
+  --edge "$EDGE" --csv "$CSV" --out "$M9_OUT" --commits-cmd "$(commits_cmd)" --timeline "$TL" &
+LP=$!
+sleep 10; printf "\n"; say "${Y}${B}scale edge to 4${N}"; scale edge 4
+sleep 20; printf "\n"; say "${Y}${B}scale edge to 1${N}"; scale edge 1
+sleep 15; printf "\n"; say "${Y}${B}scale edge back to 2${N}"; scale edge 2
+wait $LP
+say "Per-second timeline: $TL"

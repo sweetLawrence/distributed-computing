@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# M9/M10: one-screen status of the new parts: Kafka, Consul, Edge buffer, Core drain, leader.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+banner "M9 / M10 STATUS"
+printf "  %-10s %s\n" "kafka" "$($D service ls --filter name=$(S kafka) --format '{{.Replicas}}') on $(node_of kafka)"
+printf "  %-10s %s\n" "consul" "$($D service ls --filter name=$(S consul) --format '{{.Replicas}}') on $(node_of consul)   UI: http://$IP:8500/ui"
+printf "  %-10s %s\n" "leader" "$(leader_name)"
+echo
+say "Edge (one replica, via the routing mesh):"
+edge_health | json '"  replica=%s buffer=%s naming=%s  local=%s forwarded=%s buffered=%s bufferFailures=%s avgKafkaMs=%s" % (d["replica"],d["edgeBuffer"],d["namingMode"],d["localCount"],d["forwardCount"],d["bufferedCount"],d["bufferFailures"],d["bufferAvgMs"])'
+say "Core drain (store-and-forward consumer):"
+for p in $C1_PORT $C2_PORT; do
+  curl -s -m 2 "http://$IP:$p/drain" | json '"  %s leader=%s running=%s drained=%s failed=%s lastDelayMs=%s" % (d["replica"],d["isLeader"],d.get("running"),d.get("drained"),d.get("failed"),d.get("lastDelayMs"))'
+done
+say "Consul catalog (healthy instances):"
+for s in core edge; do
+  n=$(curl -s -m 2 "$CONSUL/v1/health/service/$s?passing=true" | json 'len(d)'); printf "  %-6s %s healthy\n" "$s" "${n:-?}"
+done
+printf "  KV theme5/services/core/leader = %s\n" "$(curl -s -m 2 "$CONSUL/v1/kv/theme5/services/core/leader?raw")"

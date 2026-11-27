@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Print M9 results. Optional filter: m9-results failure   (or migration, replication, overhead)
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+[ -s "$M9_OUT" ] || { echo "No results yet in $M9_OUT"; exit 1; }
+python3 - "$M9_OUT" "$@" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1]))); f = sys.argv[2:]
+if f: rows = [r for r in rows if r["experiment"] in f]
+cols = [("experiment",11),("variant",26),("concurrency",4),("success_pct",7),("throughput_rps",7),("avg_ms",7),("p95_ms",7),
+        ("lat_local_ms",6),("lat_fwd_direct_ms",7),("lat_fwd_hop_ms",6),("lat_buffered_ms",7),("n_buffered",6),("critical_sent",6),("critical_committed",6),("durability_pct",6),("outage_s",6)]
+hdr = ["exp","variant","clnt","ok%","req/s","avg","p95","local","direct","hop","kafka","buf","crit","saved","dur%","outage"]
+print("  ".join(h.ljust(w) for h,(c,w) in zip(hdr,cols))); print("-"*150)
+for r in rows: print("  ".join(str(r.get(c,"")).ljust(w)[:w] for c,w in cols))
+PY
+echo; echo "Full data: $M9_OUT   Timelines: /vagrant/m9_timeline_*.csv"

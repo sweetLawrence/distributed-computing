@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# M9 MIGRATION TRANSPARENCY: move a service to another node while real readings keep flowing.
+# Usage: m9-migrate [service]   (default: core-ml)
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+SVC="${1:-core-ml}"; DUR="${DURATION:-60}"; MOVE_AT="${MOVE_AT:-10}"; BACK_AT="${BACK_AT:-35}"
+banner "M9: MIGRATION TRANSPARENCY ($SVC)"
+term "Migration transparency" "A resource moves to another machine and the clients do not notice: they keep using the same name ($SVC); Swarm's DNS points it at the new location."
+check_ready || exit 1
+scale device 0
+FROM=$(node_of "$SVC"); [ -z "$FROM" ] && { say "${R}$SVC is not running${N}"; exit 1; }
+TO=$($D node ls --format '{{.Hostname}}' | grep -v "^$FROM$" | grep -v manager | head -1); [ -z "$TO" ] && TO=$($D node ls --format '{{.Hostname}}' | grep -v "^$FROM$" | head -1)
+ORIG=$($D service inspect -f '{{json .Spec.TaskTemplate.Placement.Constraints}}' "$(S "$SVC")")
+RM_ARGS=$(python3 -c "import json,sys; [print('--constraint-rm', repr(c)) for c in (json.loads(sys.argv[1]) or [])]" "$ORIG" | tr '\n' ' ')
+ADD_BACK=$(python3 -c "import json,sys; [print('--constraint-add', repr(c)) for c in (json.loads(sys.argv[1]) or [])]" "$ORIG" | tr '\n' ' ')
+say "$SVC runs on ${B}$FROM${N}; will move to ${B}$TO${N} at t=${MOVE_AT}s and back at t=${BACK_AT}s"
+TL=/vagrant/m9_timeline_migration.csv
+python3 "$HERE/m9-load" --experiment migration --variant "$SVC $FROM->$TO->$FROM" --conc 4 --duration "$DUR" \
+  --edge "$EDGE" --csv "$CSV" --out "$M9_OUT" --commits-cmd "$(commits_cmd)" --timeline "$TL" &
+LP=$!
+sleep "$MOVE_AT"
+T0=$(date +%s%3N); eval "$D service update -d --quiet $RM_ARGS --constraint-add 'node.hostname==$TO' $(S "$SVC")" >/dev/null
+until [ "$(node_of "$SVC")" = "$TO" ]; do sleep 0.5; done
+printf "\n"; say "${Y}${B}MOVED $SVC: $FROM -> $TO in $(( ($(date +%s%3N)-T0) )) ms${N} (old task stopped, new task running)"
+sleep $(( BACK_AT - MOVE_AT ))
+T1=$(date +%s%3N); eval "$D service update -d --quiet --constraint-rm 'node.hostname==$TO' $ADD_BACK $(S "$SVC")" >/dev/null
+until [ "$(node_of "$SVC")" = "$FROM" ]; do sleep 0.5; done
+printf "\n"; say "${Y}${B}MOVED $SVC back: $TO -> $FROM in $(( ($(date +%s%3N)-T1) )) ms${N}"
+wait $LP
+say "Per-second timeline: $TL  (look for the seconds around t=${MOVE_AT} and t=${BACK_AT})"

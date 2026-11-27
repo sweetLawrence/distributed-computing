@@ -47,6 +47,59 @@ services:
         limits: { cpus: "0.25", memory: 128M }
       restart_policy: { condition: any, delay: 5s }
 
+  # ---------------- M9: message broker for store-and-forward ----------------
+  kafka:
+    image: apache/kafka:3.7.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_HEAP_OPTS: "-Xmx256m -Xms256m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.worker2 == true]
+      resources:
+        limits: { cpus: "0.50", memory: 640M }
+      restart_policy: { condition: any, delay: 5s }
+
+  # ---------------- M10: name server / service registry ----------------
+  consul:
+    image: hashicorp/consul:1.19
+    command: >
+      agent -server -bootstrap-expect=1 -ui -client=0.0.0.0
+      -data-dir=/consul/data
+      -bind='{{ GetPrivateInterfaces | exclude "network" "172.16.0.0/12" | attr "address" }}'
+    ports:
+      - target: 8500
+        published: 8500
+        mode: host
+    volumes:
+      - consul-data:/consul/data
+    networks: [appnet]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.manager == true]
+      resources:
+        limits: { cpus: "1.00", memory: 256M }
+      restart_policy: { condition: any, delay: 5s }
+
   device:
     image: dep-device:latest
     ports:
@@ -82,11 +135,27 @@ services:
       PLACEMENT_THRESHOLD: 0.005
       FORCE_FORWARD: "0"
       CORE_HEARTBEAT_MS: 3000
+      EDGE_BUFFER: "1"
+      NAMING_MODE: static
+      KAFKA_BROKERS: kafka:9092
+      CONSUL_URL: http://consul:8500
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     networks: [appnet]
+    # M9: a new replica gets traffic only after /health answers 200
+    # (live service also has --health-start-interval 1s for fast readiness)
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      # tuned: gentle once running, so a busy replica is not mistaken for a dead one
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     deploy:
       replicas: 2
+      update_config: { order: start-first }
       resources:
-        limits: { cpus: "0.25", memory: 128M }
+        limits: { cpus: "0.25", memory: 160M }
       restart_policy: { condition: any, delay: 5s }
 
   core-1:
@@ -112,6 +181,9 @@ services:
       REDIS_PORT: 6379
       ML_URL: http://core-ml:5000
       LEADER_TTL_MS: 10000
+      KAFKA_BROKERS: kafka:9092
+      CONSUL_URL: http://consul:8500
+      DRAIN_ENABLED: "1"
     networks: [appnet]
     deploy:
       replicas: 1
@@ -144,6 +216,9 @@ services:
       REDIS_PORT: 6379
       ML_URL: http://core-ml:5000
       LEADER_TTL_MS: 10000
+      KAFKA_BROKERS: kafka:9092
+      CONSUL_URL: http://consul:8500
+      DRAIN_ENABLED: "1"
     networks: [appnet]
     deploy:
       replicas: 1
@@ -162,8 +237,16 @@ services:
     volumes:
       - /vagrant/data:/data:ro
     networks: [appnet]
+    # M9: ready only when it accepts connections, so migration is make-before-break
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost',5000),2)"]
+      interval: 3s
+      timeout: 2s
+      retries: 2
+      start_period: 10s
     deploy:
       replicas: 1
+      update_config: { order: start-first }
       placement:
         constraints: [node.labels.cloud-side == true]
       resources:
@@ -313,6 +396,8 @@ volumes:
   grafana-data:
   core-db-data:
   cloud-db-data:
+  kafka-data:
+  consul-data:
 
 networks:
   appnet:

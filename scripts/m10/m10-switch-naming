@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# M10: switch how Edge finds the Cores: static (env URLs) or consul (name server).
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+MODE="${1:-}"; [ "$MODE" = static ] || [ "$MODE" = consul ] || { echo "Usage: m10-switch-naming static|consul"; exit 1; }
+say "switching Edge naming mode to ${B}$MODE${N}"
+upd --env-add NAMING_MODE=$MODE "$(S edge)"; wait_converge; sleep 10
+edge_health | json '"  edge %s now routes with naming=%s to: %s" % (d["replica"], d["namingMode"], ", ".join(d["cores"]))'

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# M10 PROCESS MANAGEMENT: Create -> Locate -> Schedule -> Coordinate -> Terminate, timed.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+ID="job-$(date +%H%M%S)"; SVCN="${STACK}_$ID"
+banner "M10: DISTRIBUTED PROCESS LIFECYCLE ($ID)"
+now(){ date +%s%3N; }
+
+# ---- SCHEDULE ----
+term "Schedule" "Choose where the process will run. Our policy: the node with the fewest running tasks."
+declare -A LOAD
+for n in $($D node ls --format '{{.Hostname}}'); do LOAD[$n]=$($D node ps "$n" --filter desired-state=running -q 2>/dev/null | wc -l); printf "  %-10s %s running tasks\n" "$n" "${LOAD[$n]}"; done
+NODE=$(for n in "${!LOAD[@]}"; do echo "${LOAD[$n]} $n"; done | sort -n | head -1 | awk '{print $2}')
+say "scheduler decision: ${B}$NODE${N} (least loaded)"
+
+# ---- CREATE ----
+term "Create" "Start a new process (a Swarm service) pinned to the chosen node and attached to the system network."
+T0=$(now)
+$D service create -d --quiet --name "$SVCN" --network "${STACK}_appnet" --constraint "node.hostname==$NODE" \
+   --limit-memory 48M --restart-condition none dep-edge:latest sleep 600 >/dev/null
+until $D service ps "$SVCN" --filter desired-state=running --format '{{.CurrentState}}' 2>/dev/null | grep -q Running; do sleep 0.3; done
+T_CREATE=$(( $(now) - T0 )); say "created and running in ${B}${T_CREATE} ms${N}"
+
+# ---- LOCATE ----
+term "Locate" "Find where the process lives: ask the orchestrator, then register it in the name server so anyone can resolve it by name."
+TASK=$($D service ps -q "$SVCN" --filter desired-state=running | head -1)
+JOB_IP=$($D inspect "$TASK" --format '{{range .NetworksAttachments}}{{if eq .Network.Spec.Name "'"${STACK}"'_appnet"}}{{range .Addresses}}{{.}}{{end}}{{end}}{{end}}' | cut -d/ -f1)
+say "orchestrator says: node=${B}$NODE${N}  ip=${B}$JOB_IP${N}"
+curl -s -m 3 -X PUT "$CONSUL/v1/agent/service/register" -d "{\"ID\":\"$ID\",\"Name\":\"job\",\"Address\":\"$JOB_IP\",\"Port\":0,\"Tags\":[\"$NODE\"]}" >/dev/null
+curl -s -m 3 -X PUT "$CONSUL/v1/kv/theme5/jobs/$ID/state" -d "running@$NODE" >/dev/null
+T1=$(now); R=$(curl -s -m 5 "$EDGE/naming/resolve?name=job&method=consul"); T_LOCATE=$(( $(now) - T1 ))
+say "resolved by name via Consul in ${B}$(echo "$R" | json 'd["latencyMs"]') ms${N} -> $(echo "$R" | json '", ".join(d.get("result",[]))')"
+
+# ---- COORDINATE ----
+term "Coordinate" "Processes that share a resource must not act at the same time. Consul sessions give a distributed lock: only one holder."
+S1=$(curl -s -m 3 -X PUT "$CONSUL/v1/session/create" -d '{"Name":"'"$ID"'-a","TTL":"30s"}' | json 'd["ID"]')
+S2=$(curl -s -m 3 -X PUT "$CONSUL/v1/session/create" -d '{"Name":"'"$ID"'-b","TTL":"30s"}' | json 'd["ID"]')
+A1=$(curl -s -m 3 -X PUT "$CONSUL/v1/kv/theme5/locks/$ID?acquire=$S1" -d "$ID-a")
+A2=$(curl -s -m 3 -X PUT "$CONSUL/v1/kv/theme5/locks/$ID?acquire=$S2" -d "$ID-b")
+say "process A tries the lock: ${B}$A1${N}    process B tries the same lock: ${B}$A2${N}   (exactly one true = mutual exclusion)"
+say "and the Core coordinator right now: $(curl -s -m 3 "$CONSUL/v1/kv/theme5/services/core/leader-id?raw") (leader lease)"
+
+# ---- TERMINATE ----
+term "Terminate" "Stop the process cleanly: remove it, remove its name, release its locks."
+T2=$(now)
+$D service rm "$SVCN" >/dev/null
+while $D service ls -q --filter name="$SVCN" | grep -q .; do sleep 0.3; done
+curl -s -m 3 -X PUT "$CONSUL/v1/agent/service/deregister/$ID" >/dev/null
+curl -s -m 3 -X PUT "$CONSUL/v1/kv/theme5/jobs/$ID/state" -d "terminated" >/dev/null
+for s in $S1 $S2; do curl -s -m 3 -X PUT "$CONSUL/v1/session/destroy/$s" >/dev/null; done
+T_TERM=$(( $(now) - T2 )); say "terminated and cleaned up in ${B}${T_TERM} ms${N}"
+
+python3 - "$M10_OUT" <<PY
+import csv,os,sys,datetime
+out=sys.argv[1]
+rec={'timestamp':datetime.datetime.now().isoformat(timespec='seconds'),'experiment':'process','method':'lifecycle','name':'$ID','k':0,'n':1,'errors':0,
+     'avg_ms':'','p50_ms':'','p95_ms':'','max_ms':'','extra':'node=$NODE create_ms=$T_CREATE locate_ms=$T_LOCATE terminate_ms=$T_TERM lockA=$A1 lockB=$A2'}
+new=not os.path.exists(out) or os.path.getsize(out)==0
+w=csv.DictWriter(open(out,'a',newline=''),fieldnames=list(rec.keys()))
+if new: w.writeheader()
+w.writerow(rec)
+PY
+printf "\n${B}  Create %s ms | Locate %s ms | Schedule -> %s | Coordinate lock A=%s B=%s | Terminate %s ms${N}\n" "$T_CREATE" "$T_LOCATE" "$NODE" "$A1" "$A2" "$T_TERM"

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# M10 SCALABILITY ANALYSIS: register K names, then measure resolution latency for K = 10, 100, 500, 1000.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+KS="${KS:-10 100 500 1000}"; COUNT="${COUNT:-300}"
+banner "M10: NAMING SCALABILITY (K = $KS names)"
+term "Scalability" "Does resolution get slower as the number of named resources grows? Each run registers K dummy services in the static map, the Consul catalog and the KV tree, measures, then removes them."
+for K in $KS; do
+  say "K = $K: seeding and measuring (this can take a little while for large K)"
+  curl -s -m 1200 "$EDGE/naming/scalebench?k=$K&n=$COUNT" | K=$K python3 -c "
+import sys,json,csv,os,datetime
+d=json.load(sys.stdin); out=os.environ.get('M10_OUT','/vagrant/m10_results.csv')
+if 'results' not in d: print('  error:', d); sys.exit(1)
+new=not os.path.exists(out) or os.path.getsize(out)==0
+for r in d['results']:
+    rec={'timestamp':datetime.datetime.now().isoformat(timespec='seconds'),'experiment':'scalability','method':r['method'],'name':'svc-*','k':d['k'],'n':r['n'],
+         'errors':r['errors'],'avg_ms':r['avgMs'],'p50_ms':r['p50Ms'],'p95_ms':r['p95Ms'],'max_ms':r['maxMs'],'extra':'seed_ms=%s' % d['seedMs']}
+    w=csv.DictWriter(open(out,'a',newline=''),fieldnames=list(rec.keys()))
+    if new: w.writeheader(); new=False
+    w.writerow(rec)
+    print('    %-12s avg %8.3f ms   p95 %8.3f ms   errors %s' % (r['method'],r['avgMs'],r['p95Ms'],r['errors']))
+print('    (registering %s names took %s ms)' % (d['k'], d['seedMs']))"
+done
+echo "Saved to $M10_OUT"

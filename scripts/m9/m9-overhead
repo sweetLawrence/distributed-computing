@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# M9 OVERHEAD ANALYSIS: what each transparency layer costs, from the latency of each route.
+set -u
+source "$(dirname "$(readlink -f "$0")")/m9-lib"
+banner "M9: OVERHEAD OF TRANSPARENCY"
+term "Overhead analysis" "Hiding complexity is not free. We compare: answered at the edge, sent straight to the leader, sent to the standby and forwarded (one extra hop), and buffered in Kafka."
+check_ready || exit 1
+scale device 0
+for c in 1 4; do
+  python3 "$HERE/m9-load" --experiment overhead --variant "normal operation" --conc $c --duration 30 \
+    --edge "$EDGE" --csv "$CSV" --out "$M9_OUT" --commits-cmd "$(commits_cmd)"
+done
+say "Kafka (buffered) latency comes from the proposed row of m9-failure. Summary:"
+"$HERE/m9-results" overhead failure
